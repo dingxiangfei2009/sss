@@ -1,0 +1,13 @@
+[package]
+name = "sss"
+version = "0.1.0"
+authors = ["Ding Xiang Fei <dingxiangfei2009@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+alga = "0.9.1"
+num-traits = "0.2.6"
+
+[dev-dependencies]
+quickcheck = "0.8.0"
+quickcheck_macros = "0.8.0"
