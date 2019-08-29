@@ -27,12 +27,13 @@ impl<T> Polynomial<T> {
     where
         T: Field + Clone + Eq,
     {
+        let n = c.len();
         let mut w: Vec<_> = c.into_iter().map(|c| vec![c.1.clone()]).collect();
         let zero = <T as Identity<Additive>>::identity();
-        for round in 2..c.len() {
+        for round in 2..=n {
             let mut w_ = vec![];
-            for i in 0..c.len() - round {
-                let j = i + round - 1;
+            for i in 0..=n - round {
+                let j = i + (round - 1);
                 let mut v = vec![zero.clone()];
                 v.extend_from_slice(&w[i]);
                 for (k, w) in w[i].iter().enumerate() {
@@ -48,7 +49,10 @@ impl<T> Polynomial<T> {
             w = w_;
         }
         // remove zeroed high degrees
-        let mut w = w.drain(0..1).next().expect("interpolation should return exactly one polynomial");
+        let mut w = w
+            .drain(0..1)
+            .next()
+            .expect("interpolation should return exactly one polynomial");
         truncate_high_degree_zeros(&mut w, zero);
         Polynomial(w)
     }
@@ -77,8 +81,21 @@ mod tests {
             u = u.drain(0..254).collect();
         }
         truncate_high_degree_zeros(&mut u, GF2561D::zero());
+        let threshold = u.len();
         let p = Polynomial(u.clone());
-        let q: Vec<_> = (1u8..=u.len() as u8 + 1).map(GF2561D).map(|x| p.into_coord(x)).collect();
+
+        let q: Vec<_> = (1u8..=u.len() as u8 + 1)
+            .map(GF2561D)
+            .map(|x| p.into_coord(x))
+            .take(threshold)
+            .collect();
+        let r = Polynomial::from_coords(q.as_slice());
+        assert_eq!(u.as_slice(), r.0.as_slice());
+
+        let q: Vec<_> = (1u8..=u.len() as u8 + 1)
+            .map(GF2561D)
+            .map(|x| p.into_coord(x))
+            .collect();
         let r = Polynomial::from_coords(q.as_slice());
         assert_eq!(u.as_slice(), r.0.as_slice());
     }
