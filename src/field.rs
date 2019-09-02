@@ -1,13 +1,11 @@
-use alga::general::{
-    AbstractField, AbstractGroup, AbstractGroupAbelian, AbstractLoop, AbstractMagma,
-    AbstractMonoid, AbstractQuasigroup, AbstractRing, AbstractRingCommutative, AbstractSemigroup,
-    Additive, Identity, Multiplicative, TwoSidedInverse,
-};
-use num_traits::{One, Zero};
+use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
+use alga_derive::Alga;
+use num::traits::{One, Zero};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 /// GF(2^8) with quotient 1 + x^2 + x^3 + x^4 + x^8
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga)]
+#[alga_traits(Field(Additive, Multiplicative))]
 pub struct GF2561D(pub u8);
 
 pub const ZERO: GF2561D = GF2561D(0);
@@ -105,36 +103,6 @@ impl TwoSidedInverse<Multiplicative> for GF2561D {
     }
 }
 
-impl AbstractQuasigroup<Multiplicative> for GF2561D {}
-
-impl AbstractLoop<Multiplicative> for GF2561D {}
-
-impl AbstractMonoid<Multiplicative> for GF2561D {}
-
-impl AbstractSemigroup<Multiplicative> for GF2561D {}
-
-impl AbstractGroup<Multiplicative> for GF2561D {}
-
-impl AbstractGroupAbelian<Multiplicative> for GF2561D {}
-
-impl AbstractQuasigroup<Additive> for GF2561D {}
-
-impl AbstractLoop<Additive> for GF2561D {}
-
-impl AbstractMonoid<Additive> for GF2561D {}
-
-impl AbstractSemigroup<Additive> for GF2561D {}
-
-impl AbstractGroup<Additive> for GF2561D {}
-
-impl AbstractGroupAbelian<Additive> for GF2561D {}
-
-impl AbstractRing<Additive, Multiplicative> for GF2561D {}
-
-impl AbstractRingCommutative<Additive, Multiplicative> for GF2561D {}
-
-impl AbstractField<Additive, Multiplicative> for GF2561D {}
-
 impl Add for GF2561D {
     type Output = Self;
     fn add(self, other: Self) -> Self {
@@ -215,6 +183,8 @@ impl One for GF2561D {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use alga::general::{AbstractGroupAbelian, AbstractQuasigroup, AbstractRing};
 
     use quickcheck::Arbitrary;
 
