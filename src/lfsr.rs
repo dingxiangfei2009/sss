@@ -1,12 +1,14 @@
 pub use alga::general::Field;
 
-use crate::Polynomial;
+use crate::{Coord, Polynomial};
 
 pub struct LFSR<F> {
     pub connection: Polynomial<F>,
     pub len: usize,
+    pub err_eval: Polynomial<F>,
 }
 
+/// Berlekamp Massey
 pub fn berlekamp_massey<F>(s: &[F]) -> LFSR<F>
 where
     F: Field + Clone,
@@ -96,8 +98,30 @@ where
         }
     }
     let connection = Polynomial::new(lambda);
+    let err_eval = Polynomial::new(gamma);
     assert!(connection.0.len() <= l + 1);
-    LFSR { connection, len: l }
+    LFSR {
+        connection,
+        len: l,
+        err_eval,
+    }
+}
+
+/// Forney's formula
+pub fn forney<F: Field + Clone>(lfsr: &LFSR<F>) -> impl Fn(F) -> F {
+    let LFSR {
+        connection,
+        err_eval,
+        ..
+    } = lfsr;
+    let connection = connection.clone().formal_derivative();
+    let err_eval = err_eval.clone();
+    move |x| {
+        let inv = F::one() / x.clone();
+        let Coord(_, a) = err_eval.into_coord(inv.clone());
+        let Coord(_, b) = connection.into_coord(inv);
+        -x * a / b
+    }
 }
 
 #[cfg(test)]
@@ -115,6 +139,7 @@ mod tests {
         let LFSR {
             connection: lambda,
             len: v,
+            ..
         } = lfsr;
         let v = v + 1;
         if s.len() < v + 1 {

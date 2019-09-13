@@ -50,17 +50,20 @@ pub static TABLES: Tables = Tables {
 };
 
 impl Identity<Additive> for GF2561D {
+    #[inline]
     fn identity() -> Self {
         ZERO
     }
 }
 impl Identity<Multiplicative> for GF2561D {
+    #[inline]
     fn identity() -> Self {
         ONE
     }
 }
 
 impl AbstractMagma<Additive> for GF2561D {
+    #[inline]
     fn operate(&self, right: &Self) -> Self {
         match (self, right) {
             (GF2561D(left), GF2561D(right)) => GF2561D(left ^ right),
@@ -69,6 +72,7 @@ impl AbstractMagma<Additive> for GF2561D {
 }
 
 impl AbstractMagma<Multiplicative> for GF2561D {
+    #[inline]
     fn operate(&self, right: &Self) -> Self {
         match (*self, *right) {
             (GF2561D(0), GF2561D(_)) => GF2561D(0),
@@ -86,12 +90,14 @@ impl AbstractMagma<Multiplicative> for GF2561D {
 }
 
 impl TwoSidedInverse<Additive> for GF2561D {
+    #[inline]
     fn two_sided_inverse(&self) -> Self {
         *self
     }
 }
 
 impl TwoSidedInverse<Multiplicative> for GF2561D {
+    #[inline]
     fn two_sided_inverse(&self) -> Self {
         match *self {
             GF2561D(0) => panic!("divide by zero"),
@@ -105,12 +111,14 @@ impl TwoSidedInverse<Multiplicative> for GF2561D {
 
 impl Add for GF2561D {
     type Output = Self;
+    #[inline]
     fn add(self, other: Self) -> Self {
         <Self as AbstractMagma<Additive>>::operate(&self, &other)
     }
 }
 
 impl AddAssign for GF2561D {
+    #[inline]
     fn add_assign(&mut self, other: Self) {
         *self = *self + other;
     }
@@ -118,12 +126,14 @@ impl AddAssign for GF2561D {
 
 impl Sub for GF2561D {
     type Output = Self;
+    #[inline]
     fn sub(self, other: Self) -> Self {
         <Self as AbstractMagma<Additive>>::operate(&self, &other)
     }
 }
 
 impl SubAssign for GF2561D {
+    #[inline]
     fn sub_assign(&mut self, other: Self) {
         *self = *self - other;
     }
@@ -131,6 +141,7 @@ impl SubAssign for GF2561D {
 
 impl Neg for GF2561D {
     type Output = Self;
+    #[inline]
     fn neg(self) -> Self {
         self
     }
@@ -138,12 +149,14 @@ impl Neg for GF2561D {
 
 impl Mul for GF2561D {
     type Output = Self;
+    #[inline]
     fn mul(self, other: Self) -> Self {
         <Self as AbstractMagma<Multiplicative>>::operate(&self, &other)
     }
 }
 
 impl MulAssign for GF2561D {
+    #[inline]
     fn mul_assign(&mut self, other: Self) {
         *self = *self * other;
     }
@@ -151,6 +164,7 @@ impl MulAssign for GF2561D {
 
 impl Div for GF2561D {
     type Output = Self;
+    #[inline]
     fn div(self, other: Self) -> Self {
         <Self as AbstractMagma<Multiplicative>>::operate(
             &self,
@@ -160,21 +174,25 @@ impl Div for GF2561D {
 }
 
 impl DivAssign for GF2561D {
+    #[inline]
     fn div_assign(&mut self, other: Self) {
         *self = *self / other;
     }
 }
 
 impl Zero for GF2561D {
+    #[inline]
     fn zero() -> Self {
         <Self as Identity<Additive>>::identity()
     }
+    #[inline]
     fn is_zero(&self) -> bool {
         *self == Self::zero()
     }
 }
 
 impl One for GF2561D {
+    #[inline]
     fn one() -> Self {
         <Self as Identity<Multiplicative>>::identity()
     }

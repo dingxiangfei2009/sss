@@ -61,6 +61,20 @@ where
         (Polynomial(quot), self)
     }
 
+    pub fn formal_derivative(mut self) -> Self {
+        if self.0.len() > 1 {
+            let mut n = T::one();
+            self.0.remove(0);
+            for i in 0..self.0.len() {
+                self.0[i] *= n.clone();
+                n += T::one();
+            }
+            self
+        } else {
+            Self(vec![T::zero()])
+        }
+    }
+
     pub fn is_zero(&self) -> bool {
         assert!(self.0.len() > 0);
         self.0.iter().all(|c| c.is_zero())
