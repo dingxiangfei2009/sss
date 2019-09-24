@@ -1,12 +1,61 @@
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
+
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
 use alga_derive::Alga;
 use num::traits::{One, Zero};
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+pub trait FiniteField: alga::general::Field {
+    const CHARACTERISTIC: usize;
+    const DEGREE_EXTENSION: usize;
+}
+
+pub trait FinitelyGenerated<G> {
+    const GENERATOR: Self;
+}
+
+pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b01101101);
+pub const GF2561D_NORMAL_BASIS_SET: &[GF2561D] = &[
+    GF2561D(0b01101101), // alpha^(2^0)
+    GF2561D(0b11101000), // alpha^(2^1)
+    GF2561D(0b11101010), // alpha^(2^2)
+    GF2561D(0b11101110), // alpha^(2^3)
+    GF2561D(0b11111110), // alpha^(2^4)
+    GF2561D(0b11100011), // alpha^(2^5)
+    GF2561D(0b10101111), // alpha^(2^6)
+    GF2561D(0b00110010), // alpha^(2^7)
+];
+
+pub trait ArbitraryElement {
+    fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self;
+}
 
 /// GF(2^8) with quotient 1 + x^2 + x^3 + x^4 + x^8
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct GF2561D(pub u8);
+
+pub struct GF2561DG2;
+
+impl FiniteField for GF2561D {
+    const CHARACTERISTIC: usize = 2;
+    const DEGREE_EXTENSION: usize = 8;
+}
+
+impl FinitelyGenerated<GF2561DG2> for GF2561D {
+    const GENERATOR: Self = GF2561D(2);
+}
+
+impl ArbitraryElement for GF2561D {
+    fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self {
+        use rand::distributions::Distribution;
+
+        let u = rand::distributions::uniform::Uniform::from(0..=255);
+        GF2561D(u.sample(rng))
+    }
+}
 
 pub const ZERO: GF2561D = GF2561D(0);
 pub const ONE: GF2561D = GF2561D(1);
@@ -15,6 +64,7 @@ pub struct Tables {
     pub exp: [u8; 256],
     pub log: [u8; 256],
 }
+
 pub static TABLES: Tables = Tables {
     exp: [
         1, 2, 4, 8, 16, 32, 64, 128, 29, 58, 116, 232, 205, 135, 19, 38, 76, 152, 45, 90, 180, 117,
@@ -195,6 +245,12 @@ impl One for GF2561D {
     #[inline]
     fn one() -> Self {
         <Self as Identity<Multiplicative>>::identity()
+    }
+}
+
+impl Display for GF2561D {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{:08b}", self.0)
     }
 }
 
