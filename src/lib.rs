@@ -8,11 +8,14 @@ extern crate derive_more;
 
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
-    ops::{Add, Mul, Sub},
+    ops::{Add, BitAnd, Mul, ShrAssign, Sub},
 };
 
 use alga::general::{Additive, Field, Identity};
-use num::traits::{One, Zero};
+use num::{
+    traits::{One, Pow, Zero},
+    BigUint, ToPrimitive,
+};
 
 pub mod field;
 pub mod lfsr;
@@ -384,7 +387,7 @@ where
     let mut p = vec![];
     for _ in 0..deg_ext {
         p.push(beta.clone());
-        beta = pow(beta, deg_ext);
+        beta = pow(beta, F::CHARACTERISTIC);
     }
     assert!(alpha == beta, "field element is not in the subfield");
     p.reverse();
@@ -398,31 +401,77 @@ where
     F: FiniteField + Clone + FinitelyGenerated<G>,
 {
     assert_subfield::<F>(deg_ext);
-    let gamma = pow(
-        <F as FinitelyGenerated<G>>::GENERATOR,
-        F::DEGREE_EXTENSION / deg_ext,
-    );
+
+    // the following division will produce zero remainder after the last
+    // assertion
+    let exp: BigUint = (BigUint::from(F::CHARACTERISTIC).pow(F::DEGREE_EXTENSION) - 1u8)
+        / (BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8);
+
+    let gamma = pow(<F as FinitelyGenerated<G>>::GENERATOR, exp);
     let mut alpha = gamma.clone();
-    for _ in 0..deg_ext {
+    let mut c = BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8;
+    while !c.is_zero() {
         if test_normal_basis(alpha.clone(), deg_ext) {
             return alpha;
         }
+        c -= 1u8;
         alpha *= gamma.clone();
     }
-    unreachable!()
+    unreachable!("expecting finding a normal basis before this point")
 }
 
-pub fn pow<F: Field + Clone>(mut x: F, mut exp: usize) -> F {
+// NOTE: as of Rust 1.27.0, typeck cannot deduce that
+// `<E as for<'a> BitAnd<'a E>>::Output: Zero`
+// even when it is the case
+pub fn pow<F, E>(mut x: F, mut exp: E) -> F
+where
+    E: BitAnd,
+    E: for<'a> BitAnd<&'a E, Output = E>,
+    E: ShrAssign<usize> + From<u8> + Zero + Clone,
+    F: Field + Clone,
+{
     let mut p = x;
     x = F::one();
-    while exp > 0 {
-        if exp & 1 > 0 {
+    let bit = E::from(1);
+    while !exp.is_zero() {
+        if !(exp.clone() & &bit).is_zero() {
             x *= p.clone();
         }
         p *= p.clone();
         exp >>= 1;
     }
     x
+}
+
+pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
+    let mut q = BigUint::from(1u8);
+    let mut p_pows = vec![];
+    for _ in 0..F::DEGREE_EXTENSION {
+        p_pows.push(q.clone());
+        q *= F::CHARACTERISTIC;
+        q %= n;
+    }
+    q += n - 1;
+    q %= n;
+    assert!(q.is_zero(), "{} is not zero", q);
+
+    // TODO: maybe use ufds here?
+    let mut cosets = vec![vec![0]];
+    let mut s = std::collections::BTreeSet::new();
+    for i in 1..n {
+        let mut coset = vec![];
+        for p in &p_pows {
+            let j = (p.clone() * i) % n;
+            if !s.insert(j.clone()) {
+                break;
+            }
+            coset.push(j.to_usize().expect("size should fit"));
+        }
+        if !coset.is_empty() {
+            cosets.push(coset);
+        }
+    }
+    cosets
 }
 
 #[cfg(test)]
@@ -815,11 +864,8 @@ mod tests {
     fn gf2561d_gamma_is_normal_basis() {
         let gamma = GF2561D_NORMAL_BASIS;
         let mut g = vec![GF2561D::zero(); GF2561D::DEGREE_EXTENSION + 1];
-        g[GF2561D::DEGREE_EXTENSION] = GF2561D::one();
-        g[0] -= GF2561D::one();
-        for g in &mut g {
-            *g /= GF2561D(214);
-        }
+        g[GF2561D::DEGREE_EXTENSION] = GF2561D::one() / GF2561D(0b00010011);
+        g[0] -= GF2561D::one() / GF2561D(0b00010011);
         let g = Polynomial::new(g);
 
         let mut beta = gamma.clone();
@@ -832,13 +878,13 @@ mod tests {
         let p = Polynomial::new(p);
         eprintln!("betas={}", p);
         let d = g.gcd(p.clone());
+        eprintln!("gcd={}", d);
         assert!(!d.is_zero() && d.0.len() == 1, "gcd {} should be 1", d);
 
         // explicitly test linear independence
         let Polynomial(p) = p;
         let mut h = std::collections::HashSet::new();
         for i in 0..=255u8 {
-            eprintln!("index {}", i);
             let mut x = GF2561D::zero();
             let mut m = 1;
             for j in 0..8 {
@@ -894,5 +940,82 @@ mod tests {
         assert!(r.is_zero());
         let (_, r) = q.div_with_rem(d);
         assert!(r.is_zero());
+    }
+
+    fn gf2561d_normal_basis_conversion(gamma: GF2561D, deg_ext: usize) {
+        use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+        assert_subfield::<GF2561D>(deg_ext);
+        let basis: Vec<_> = {
+            let mut gamma = gamma;
+            let mut basis = vec![];
+            for _ in 0..deg_ext {
+                basis.push(gamma);
+                gamma = pow(gamma, GF2561D::CHARACTERISTIC);
+            }
+            basis
+        };
+        let basis: Vec<_> = basis
+            .into_iter()
+            .flat_map(|GF2561D(beta)| (0..deg_ext).map(move |i| GF2561D((beta >> i) & 1u8)))
+            .chain(vec![GF2561D::zero(); deg_ext])
+            .collect();
+        let basis = ndarray::ArrayView::from_shape((deg_ext + 1, deg_ext), &basis)
+            .expect("shape should be correct");
+        let inv: Vec<_> = (0..deg_ext)
+            .into_par_iter()
+            .flat_map(|i| {
+                let mut basis = basis.t().to_owned();
+                basis[[i, deg_ext]] = GF2561D::one();
+                crate::linalg::solve(basis)
+                    .expect("should have a solution")
+                    .to_vec()
+            })
+            .collect();
+        let inv = ndarray::ArrayView::from_shape((deg_ext, deg_ext), &inv)
+            .expect("shape should be correct")
+            .t()
+            .to_owned();
+        println!("{}", inv);
+    }
+
+    #[test]
+    fn gf2561d_gamma_normal_basis_has_conversion() {
+        gf2561d_normal_basis_conversion(
+            crate::field::GF2561D_NORMAL_BASIS,
+            GF2561D::DEGREE_EXTENSION,
+        );
+    }
+
+    #[test]
+    fn gf2561d_15th_cyclotomic_coset() {
+        assert_eq!(
+            vec![
+                vec![0],
+                vec![1, 2, 4, 8],
+                vec![3, 6, 12, 9],
+                vec![5, 10],
+                vec![7, 14, 13, 11],
+            ],
+            compute_cyclotomic_cosets::<GF2561D>(15)
+        );
+    }
+
+    #[test]
+    fn gf2561d_subfield_16_normal_basis() {
+        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(4);
+        eprintln!("gamma={}", gamma);
+        assert_eq!(pow(gamma.clone(), 16), gamma);
+        assert_eq!(gamma, GF2561D(0b00001010));
+        gf2561d_normal_basis_conversion(gamma, 4);
+    }
+
+    #[test]
+    fn gf2561d_subfield_4_normal_basis() {
+        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(2);
+        eprintln!("gamma={}", gamma);
+        assert_eq!(pow(gamma.clone(), 4), gamma);
+        assert_eq!(gamma, GF2561D(0b11010110));
+        gf2561d_normal_basis_conversion(gamma, 2);
     }
 }

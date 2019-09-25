@@ -16,16 +16,26 @@ pub trait FinitelyGenerated<G> {
     const GENERATOR: Self;
 }
 
-pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b01101101);
+pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b11100111);
 pub const GF2561D_NORMAL_BASIS_SET: &[GF2561D] = &[
-    GF2561D(0b01101101), // alpha^(2^0)
-    GF2561D(0b11101000), // alpha^(2^1)
-    GF2561D(0b11101010), // alpha^(2^2)
-    GF2561D(0b11101110), // alpha^(2^3)
-    GF2561D(0b11111110), // alpha^(2^4)
-    GF2561D(0b11100011), // alpha^(2^5)
-    GF2561D(0b10101111), // alpha^(2^6)
-    GF2561D(0b00110010), // alpha^(2^7)
+    GF2561D(0b11100111), // alpha^(2^0)
+    GF2561D(0b10111111), // alpha^(2^1)
+    GF2561D(0b00101111), // alpha^(2^2)
+    GF2561D(0b00100001), // alpha^(2^3)
+    GF2561D(0b01110101), // alpha^(2^4)
+    GF2561D(0b10110101), // alpha^(2^5)
+    GF2561D(0b01101011), // alpha^(2^6)
+    GF2561D(0b11111100), // alpha^(2^7)
+];
+pub const GF2561D_NORMAL_BASIS_CONV: &[&[u8]] = &[
+    &[1, 1, 0, 1, 0, 1, 0, 0],
+    &[1, 1, 1, 0, 0, 1, 1, 1],
+    &[1, 1, 1, 1, 1, 1, 0, 0],
+    &[1, 0, 1, 0, 1, 0, 1, 1],
+    &[1, 1, 0, 1, 1, 1, 0, 1],
+    &[1, 0, 1, 1, 0, 1, 1, 0],
+    &[1, 0, 0, 0, 1, 1, 1, 1],
+    &[1, 0, 0, 0, 0, 1, 0, 0],
 ];
 
 pub trait ArbitraryElement {

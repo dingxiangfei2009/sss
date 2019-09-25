@@ -1,10 +1,9 @@
 use alga::general::Field;
 use ndarray::{s, Array1, Array2, Axis, Zip};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 
 /// solve a system of linear equation with Gaussian Elimination
 pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
-    use ndarray_parallel::prelude::*;
-
     let (equations, unknowns) = a.dim();
     assert!(unknowns > 0, "there needs to be at least one unknown");
     let unknowns = unknowns - 1;
