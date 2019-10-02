@@ -18,6 +18,7 @@ use num::{
 };
 
 pub mod field;
+pub mod fourier;
 pub mod lfsr;
 pub mod linalg;
 pub mod conv;
