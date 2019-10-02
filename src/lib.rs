@@ -20,6 +20,7 @@ use num::{
 pub mod field;
 pub mod lfsr;
 pub mod linalg;
+pub mod conv;
 
 pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
 
