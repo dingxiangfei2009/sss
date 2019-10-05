@@ -17,11 +17,11 @@ use num::{
     BigUint, ToPrimitive,
 };
 
+pub mod conv;
 pub mod field;
 pub mod fourier;
 pub mod lfsr;
 pub mod linalg;
-pub mod conv;
 
 pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
 
