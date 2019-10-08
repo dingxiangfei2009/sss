@@ -11,6 +11,7 @@ rayon = "1.2.0"
 rand = "0.7.2"
 num = "0.2.0"
 derive_more = "0.15.0"
+lazy_static = "1.0"
 
 [dependencies.ndarray]
 version = "0.13.0"
@@ -20,3 +21,7 @@ features = ["rayon"]
 approx = "0.3.0"
 quickcheck = "0.8.0"
 quickcheck_macros = "0.8.0"
+
+[dev-dependencies.phf]
+version = "0.8"
+features = ["macros"]

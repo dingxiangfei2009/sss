@@ -1,13 +1,20 @@
 use std::{
     mem::MaybeUninit,
-    ops::{Mul, Neg, Sub},
+    ops::{Add, BitAnd, Deref, Mul, Neg, ShrAssign, Sub},
+    sync::Arc,
 };
 
+use alga::general::Field;
 use ndarray::{
-    Array, Array1, Array2, ArrayView, ArrayView1, ArrayView2, Axis, ErrorKind, RemoveAxis,
-    ShapeError, Zip,
+    Array, Array1, Array2, ArrayView, ArrayView2, Axis, ErrorKind, RemoveAxis, ShapeError, Zip,
 };
 use num::{One, Zero};
+
+use crate::{
+    field::FiniteField,
+    linalg::{mat_mat_mul, mat_vec_mul},
+    EuclideanDomain,
+};
 
 macro_rules! stack {
     ($axis:expr, $( $array:expr ),+ ) => {
@@ -56,38 +63,6 @@ pub fn toeplitz_e(n: usize) -> (usize, Array2<i8>) {
         assert_eq!((n, m), e.dim());
         (m, e)
     }
-}
-
-fn mat_vec_mul<F>(a: ArrayView2<F>, b: ArrayView1<F>) -> Vec<F>
-where
-    F: Zero + Clone + Mul<Output = F>,
-{
-    assert_eq!(a.dim().1, b.dim());
-    a.axis_iter(Axis(0))
-        .map(|r| (r.to_owned() * b.to_owned()).scalar_sum())
-        .collect()
-}
-
-fn mat_mat_mul<'a, 'b, F>(
-    a: impl Into<ArrayView2<'a, F>>,
-    b: impl Into<ArrayView2<'b, F>>,
-) -> Array2<F>
-where
-    F: 'a + 'b + Zero + Clone + Mul<Output = F>,
-{
-    let a = a.into();
-    let b = b.into();
-    let (n, m) = a.dim();
-    let (m_, p) = b.dim();
-    assert_eq!(m, m_);
-    let c: Vec<_> = b
-        .axis_iter(Axis(1))
-        .flat_map(|c| mat_vec_mul(a, c))
-        .collect();
-    Array2::from_shape_vec((p, n), c)
-        .expect("shape should be correct")
-        .t()
-        .to_owned()
 }
 
 fn stack<'a, A, D>(axis: Axis, arrays: &[ArrayView<'a, A, D>]) -> Result<Array<A, D>, ShapeError>
@@ -143,14 +118,6 @@ where
     Ok(res)
 }
 
-fn mat_y(n: usize) -> Array2<i8> {
-    let mut y = Array2::zeros((n, n));
-    for i in 0..n {
-        y[[i, n - 1 - i]] = 1;
-    }
-    y
-}
-
 pub fn toeplitz_gh<F>(n: usize) -> (usize, Array2<F>, Array2<i8>)
 where
     F: Zero + One + Clone + Sub<Output = F> + Mul<Output = F> + Neg<Output = F>,
@@ -160,7 +127,7 @@ where
     if n == 1 {
         (1, Array2::eye(1), Array2::eye(1))
     } else if n & 1 > 0 {
-        let (m, g, h) = toeplitz_gh(k);
+        let (m, g, h) = toeplitz_gh::<F>(k);
         let d_ = toeplitz_d(n);
         let d = d_.map(|x| {
             if *x > 0 {
@@ -203,12 +170,13 @@ where
             stack![Axis(1), Array2::zeros((n, k)), d, Array2::zeros((n, k))],
             mat_mat_mul(&g, &(q_1 - q_0)) + g_1
         ];
-        let y = mat_y(n);
+        let mut d_ = d_.t();
+        d_.invert_axis(Axis(1));
         let h = stack![
             Axis(0),
             stack![Axis(1), h.clone(), Array2::zeros((m, 1)), h.clone()],
             stack![Axis(1), Array2::zeros((m, k + 1)), h.clone()],
-            mat_mat_mul(d_.t(), &y),
+            d_,
             stack![Axis(1), h.clone(), Array2::zeros((m, k + 1))]
         ];
         let m = 3 * m + n;
@@ -216,7 +184,7 @@ where
         assert_eq!((m, n), h.dim());
         (m, g, h)
     } else {
-        let (m, g, h) = toeplitz_gh(k);
+        let (m, g, h) = toeplitz_gh::<F>(k);
         #[allow(non_snake_case)]
         let p__1 = stack![Axis(1), Array2::eye(n - 1), Array2::zeros((n - 1, n))];
         let p_0 = stack![
@@ -245,11 +213,12 @@ where
     }
 }
 
-pub fn toeplitz_unit_mul<F>(u: Array2<i8>, v: Array1<F>) -> Array1<F>
+pub fn toeplitz_unit_mul<'a, F>(u: impl Into<ArrayView2<'a, i8>>, v: Array1<F>) -> Array1<F>
 where
-    F: Zero + Clone + Sub<Output = F> + Mul<Output = F>,
+    F: 'a + Zero + Clone + Sub<Output = F> + Mul<Output = F>,
 {
-    u.axis_iter(Axis(0))
+    u.into()
+        .axis_iter(Axis(0))
         .map(|r| {
             Zip::from(r).and(&v).fold(F::zero(), |a, u, v| {
                 if u > &0 {
@@ -264,6 +233,477 @@ where
         .collect()
 }
 
+pub trait LinearOperator<F> {
+    fn op(&self, vec: &[F]) -> Vec<F>;
+    fn source_dim(&self) -> usize;
+    fn dest_dim(&self) -> usize;
+}
+
+pub struct GenericLinearOperator<F>(Box<dyn LinearOperator<F>>);
+
+impl<F, T> LinearOperator<F> for T
+where
+    T: Deref,
+    T::Target: LinearOperator<F>,
+{
+    fn op(&self, vec: &[F]) -> Vec<F> {
+        <T::Target as LinearOperator<F>>::op(self.deref(), vec)
+    }
+
+    fn source_dim(&self) -> usize {
+        <T::Target as LinearOperator<F>>::source_dim(self.deref())
+    }
+
+    fn dest_dim(&self) -> usize {
+        <T::Target as LinearOperator<F>>::dest_dim(self.deref())
+    }
+}
+
+pub trait BilinearAlgorithm<F: Send + Sync + Clone>
+where
+    F: 'static + Add<Output = F> + Mul<Output = F>,
+{
+    type A: LinearOperator<F> + Send + Sync;
+    type B: 'static + LinearOperator<F> + Send + Sync;
+    type C: 'static + LinearOperator<F> + Send + Sync;
+
+    /// construction of the bilinear form algorithm
+    fn make_algorithm(&self) -> (Self::A, Self::B, Self::C);
+
+    fn apply(&self, x: &[F]) -> Box<dyn Send + Sync + Fn(&[F]) -> Vec<F>> {
+        let (a, b, c) = self.make_algorithm();
+        assert_eq!(a.dest_dim(), b.dest_dim());
+        let x = a.op(x);
+        Box::new(move |y| {
+            let y = b.op(y);
+            assert_eq!(x.len(), y.len());
+            let z: Vec<_> = x
+                .iter()
+                .cloned()
+                .zip(y.into_iter())
+                .map(|(x, y)| x * y)
+                .collect();
+            c.op(&z)
+        })
+    }
+}
+
+/// type-erased bilinear algorithm
+#[derive(Clone)]
+pub struct GenericBilinearAlgorithm<F> {
+    a: Arc<Box<dyn Send + Sync + LinearOperator<F>>>,
+    b: Arc<Box<dyn Send + Sync + LinearOperator<F>>>,
+    c: Arc<Box<dyn Send + Sync + LinearOperator<F>>>,
+}
+
+impl<F: Send + Sync + Clone> BilinearAlgorithm<F> for GenericBilinearAlgorithm<F>
+where
+    F: 'static + Add<Output = F> + Mul<Output = F>,
+{
+    type A = Arc<Box<dyn Send + Sync + LinearOperator<F>>>;
+    type B = Arc<Box<dyn Send + Sync + LinearOperator<F>>>;
+    type C = Arc<Box<dyn Send + Sync + LinearOperator<F>>>;
+    fn make_algorithm(&self) -> (Self::A, Self::B, Self::C) {
+        (
+            Arc::clone(&self.a),
+            Arc::clone(&self.b),
+            Arc::clone(&self.c),
+        )
+    }
+}
+
+impl<F: Send + Sync + Clone> GenericBilinearAlgorithm<F> {
+    pub fn new<A>(algo: &A) -> Self
+    where
+        A: 'static + BilinearAlgorithm<F>,
+        F: 'static + Add<Output = F> + Mul<Output = F>,
+    {
+        let (a, b, c) = algo.make_algorithm();
+        Self {
+            a: Arc::new(Box::new(a) as Box<dyn Send + Sync + LinearOperator<F>>),
+            b: Arc::new(Box::new(b) as Box<dyn Send + Sync + LinearOperator<F>>),
+            c: Arc::new(Box::new(c) as Box<dyn Send + Sync + LinearOperator<F>>),
+        }
+    }
+}
+
+pub struct TensorProduct<A, B>(A, B);
+
+impl<A, B, F> LinearOperator<F> for TensorProduct<A, B>
+where
+    A: LinearOperator<F>,
+    B: LinearOperator<F>,
+    F: Clone + Add<Output = F> + Mul<Output = F>,
+{
+    fn op(&self, vec: &[F]) -> Vec<F> {
+        assert_eq!(vec.len(), self.source_dim());
+        let m = self.0.source_dim();
+        let n = self.1.source_dim();
+        let mat = ArrayView2::from_shape((m, n), vec)
+            .expect("shape should be correct")
+            .axis_iter(Axis(1))
+            .flat_map(|c| self.0.op(&c.to_vec()))
+            .collect();
+        let m = self.0.dest_dim();
+        let mat: Vec<_> = Array2::from_shape_vec((n, m), mat)
+            .expect("shape should be correct")
+            .axis_iter(Axis(1))
+            .flat_map(|c| self.1.op(&c.to_vec()))
+            .collect();
+        let n = self.1.dest_dim();
+        assert_eq!(mat.len(), m * n);
+        mat
+    }
+
+    fn source_dim(&self) -> usize {
+        self.0.source_dim() * self.1.source_dim()
+    }
+
+    fn dest_dim(&self) -> usize {
+        self.0.dest_dim() * self.1.dest_dim()
+    }
+}
+
+pub struct LinearProduct<A, B>(A, B);
+
+impl<A, B, F> LinearOperator<F> for LinearProduct<A, B>
+where
+    A: LinearOperator<F>,
+    B: LinearOperator<F>,
+    F: Clone + Add<Output = F> + Mul<Output = F>,
+{
+    fn op(&self, vec: &[F]) -> Vec<F> {
+        assert_eq!(self.1.source_dim(), vec.len());
+        assert_eq!(self.1.dest_dim(), self.0.source_dim());
+        self.0.op(&self.1.op(vec))
+    }
+
+    fn source_dim(&self) -> usize {
+        self.1.source_dim()
+    }
+
+    fn dest_dim(&self) -> usize {
+        self.0.dest_dim()
+    }
+}
+
+pub struct AgarwalCooley<A1, A2> {
+    n1: usize,
+    n2: usize,
+    a1: A1,
+    a2: A2,
+    q: Permutation,
+}
+
+impl<A1, A2> AgarwalCooley<A1, A2> {
+    pub fn new(n1: usize, a1: A1, n2: usize, a2: A2) -> Self {
+        assert!(n1 > 1 && n2 > 1);
+        let (R(s), R(t), r) = usize::extended_gcd(n1, n2);
+        assert_eq!(r, 1);
+        let (s, t) = (
+            s.rem_euclid(n2 as isize) as usize,
+            t.rem_euclid(n1 as isize) as usize,
+        );
+        let e1 = t * n2; // e1 mod n1 = 1, e1 mod n2 = 0
+        let e2 = s * n1; // e2 mod n1 = 0, e2 mod n2 = 1
+
+        let mut q = Vec::with_capacity(n1 * n2);
+        let n = n1 * n2;
+        q.resize(n, 0);
+        for i in 0..n1 {
+            for j in 0..n2 {
+                q[i * n2 + j] = (i * e1 % n + j * e2 % n) % n;
+            }
+        }
+        let q = Permutation(q);
+        Self { n1, n2, a1, a2, q }
+    }
+}
+
+impl<A1, A2, F: Send + Sync> BilinearAlgorithm<F> for AgarwalCooley<A1, A2>
+where
+    A1: BilinearAlgorithm<F>,
+    A2: BilinearAlgorithm<F>,
+    F: 'static + Clone + Add<Output = F> + Mul<Output = F>,
+{
+    type A = LinearProduct<TensorProduct<A1::A, A2::A>, Permutation>;
+    type B = LinearProduct<TensorProduct<A1::B, A2::B>, Permutation>;
+    type C = LinearProduct<Permutation, TensorProduct<A1::C, A2::C>>;
+    fn make_algorithm(&self) -> (Self::A, Self::B, Self::C) {
+        let Self { n1, n2, a1, a2, q } = self;
+        let (n1, n2) = (*n1, *n2);
+        let (a1, b1, c1) = a1.make_algorithm();
+        let (a2, b2, c2) = a2.make_algorithm();
+        assert_eq!(a1.source_dim(), n1);
+        assert_eq!(b2.source_dim(), n2);
+        (
+            LinearProduct(TensorProduct(a1, a2), q.clone()),
+            LinearProduct(TensorProduct(b1, b2), q.clone()),
+            LinearProduct(q.invert(), TensorProduct(c1, c2)),
+        )
+    }
+}
+
+#[derive(Clone)]
+pub struct Permutation(Vec<usize>);
+
+impl Permutation {
+    fn invert(&self) -> Self {
+        let n = self.0.len();
+        let mut r = Vec::with_capacity(n);
+        r.resize(n, None);
+        for (i, &j) in self.0.iter().enumerate() {
+            assert!(r[j].is_none());
+            r[j] = Some(i);
+        }
+        Permutation(r.into_iter().flat_map(std::convert::identity).collect())
+    }
+}
+
+impl<F: Clone> LinearOperator<F> for Permutation {
+    fn op(&self, vec: &[F]) -> Vec<F> {
+        let n = self.0.len();
+        assert_eq!(vec.len(), n);
+        let mut r = Vec::with_capacity(n);
+        r.resize(n, None);
+        for (i, &j) in self.0.iter().enumerate() {
+            assert!(r[i].is_none());
+            r[i] = Some(vec[j].clone())
+        }
+        r.into_iter().flat_map(std::convert::identity).collect()
+    }
+
+    fn source_dim(&self) -> usize {
+        self.0.len()
+    }
+
+    fn dest_dim(&self) -> usize {
+        self.0.len()
+    }
+}
+
+pub struct ConvToToeplitz(usize);
+
+impl<F: Clone> LinearOperator<F> for ConvToToeplitz {
+    fn op(&self, x: &[F]) -> Vec<F> {
+        assert_eq!(x.len(), self.0);
+        let mut r = x[1..].to_vec();
+        r.extend_from_slice(x);
+        r
+    }
+
+    fn source_dim(&self) -> usize {
+        self.0
+    }
+
+    fn dest_dim(&self) -> usize {
+        2 * self.0 - 1
+    }
+}
+
+pub struct ToeplitzConv(pub usize);
+
+impl<F: 'static + Field + Send + Sync> BilinearAlgorithm<F> for ToeplitzConv {
+    type A = LinearProduct<ToeplitzG<F>, ConvToToeplitz>;
+    type B = UnitMatrix;
+    type C = UnitMatrix;
+    fn make_algorithm(&self) -> (Self::A, Self::B, Self::C) {
+        let Self(n) = *self;
+        let (m, e) = toeplitz_e(n);
+        let (_, g, h) = toeplitz_gh(n);
+        let e = {
+            let mut add = vec![];
+            let mut sub = vec![];
+            for i in 0..n {
+                let mut add_ = vec![];
+                let mut sub_ = vec![];
+                for j in 0..m {
+                    let v = e[[i, j]];
+                    if v > 0 {
+                        add_.push(j)
+                    } else if v < 0 {
+                        sub_.push(j)
+                    }
+                }
+                add.push(add_);
+                sub.push(sub_);
+            }
+            UnitMatrix {
+                add,
+                sub,
+                source_dim: m,
+                dest_dim: n,
+            }
+        };
+        let h = {
+            let mut add = vec![];
+            let mut sub = vec![];
+            for i in 0..m {
+                let mut add_ = vec![];
+                let mut sub_ = vec![];
+                for j in 0..n {
+                    let v = h[[i, j]];
+                    if v > 0 {
+                        add_.push(j)
+                    } else if v < 0 {
+                        sub_.push(j)
+                    }
+                }
+                add.push(add_);
+                sub.push(sub_);
+            }
+            UnitMatrix {
+                add,
+                sub,
+                source_dim: n,
+                dest_dim: m,
+            }
+        };
+        (LinearProduct(ToeplitzG(g), ConvToToeplitz(n)), h, e)
+    }
+}
+
+pub struct ToeplitzG<F>(Array2<F>);
+
+impl<F: Clone + Zero + Mul<Output = F>> LinearOperator<F> for ToeplitzG<F> {
+    fn op(&self, x: &[F]) -> Vec<F> {
+        mat_vec_mul(&self.0, x)
+    }
+
+    fn source_dim(&self) -> usize {
+        self.0.dim().1
+    }
+
+    fn dest_dim(&self) -> usize {
+        self.0.dim().0
+    }
+}
+
+pub struct UnitMatrix {
+    add: Vec<Vec<usize>>,
+    sub: Vec<Vec<usize>>,
+    source_dim: usize,
+    dest_dim: usize,
+}
+
+impl<F: Clone + Zero + Sub<Output = F>> LinearOperator<F> for UnitMatrix {
+    fn op(&self, x: &[F]) -> Vec<F> {
+        let mut r = Vec::with_capacity(self.dest_dim);
+        for i in 0..self.dest_dim {
+            let mut add = F::zero();
+            let mut sub = F::zero();
+            for &idx in &self.add[i] {
+                add = add + x[idx].clone();
+            }
+            for &idx in &self.sub[i] {
+                sub = sub + x[idx].clone();
+            }
+            r.push(add - sub);
+        }
+        r
+    }
+
+    fn source_dim(&self) -> usize {
+        self.source_dim
+    }
+
+    fn dest_dim(&self) -> usize {
+        self.dest_dim
+    }
+}
+
+pub fn int_inj<F, N>(mut n: N) -> F
+where
+    F: Zero + One + Add<Output = F> + Clone,
+    N: BitAnd<Output = N> + ShrAssign<usize> + Clone + One + Zero,
+{
+    let mut f = F::zero();
+    let mut f_ = F::one();
+    let n_one = N::one();
+    while !n.is_zero() {
+        if !(n.clone() & n_one.clone()).is_zero() {
+            f = f.clone() + f_.clone();
+        }
+        f_ = f.clone() + f_.clone();
+        n >>= 1;
+    }
+    f
+}
+
+pub fn cyclic_conv_char<F>(mut y: Vec<F>) -> impl Fn(Vec<F>) -> Vec<F>
+where
+    F: FiniteField + Clone,
+{
+    let n = y.len();
+    assert_eq!(n, F::CHARACTERISTIC);
+    // toeplitz matrix from y
+    let mut y_ = y[1..].to_vec();
+    y_.extend(y.drain(..));
+    let y = Array1::from(y);
+    let (_, e) = toeplitz_e(n);
+    let (_, g, h) = toeplitz_gh::<F>(n);
+    let g = Array1::from(mat_vec_mul(g.view(), y.view()));
+    move |x: Vec<F>| {
+        let x = Array1::from(x);
+        let x = toeplitz_unit_mul(&h, x);
+        assert_eq!(x.len(), n);
+        toeplitz_unit_mul(&e, g.clone() * x).to_vec()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct R(pub isize);
+
+impl One for R {
+    fn one() -> Self {
+        R(1)
+    }
+}
+
+impl Zero for R {
+    fn zero() -> Self {
+        R(0)
+    }
+    fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl Mul for R {
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        R(self.0 * other.0)
+    }
+}
+
+impl Mul<usize> for R {
+    type Output = Self;
+    fn mul(self, other: usize) -> Self {
+        R(other as isize * self.0)
+    }
+}
+
+impl Add for R {
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        R(self.0 + other.0)
+    }
+}
+
+impl Add<usize> for R {
+    type Output = Self;
+    fn add(self, other: usize) -> Self {
+        R(other as isize + self.0)
+    }
+}
+
+impl Sub for R {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        R(self.0 - other.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,6 +716,14 @@ mod tests {
         field::GF2561D,
         tests::{Frac, F7},
     };
+
+    fn mat_y(n: usize) -> Array2<i8> {
+        let mut y = Array2::zeros((n, n));
+        for i in 0..n {
+            y[[i, n - 1 - i]] = 1;
+        }
+        y
+    }
 
     #[quickcheck]
     fn wu2012_lemma4_5(n: usize) {
@@ -344,11 +792,11 @@ mod tests {
         let n = v.dim();
         assert_eq!(2 * n - 1, t.dim());
         let (_, e) = toeplitz_e(n);
-        let (_, g, h) = toeplitz_gh(n);
+        let (_, g, h) = toeplitz_gh::<F>(n);
         eprintln!("g, e, h are generated");
         // u = E . ((G . t) * (H . v))
-        let x = Array1::from(mat_vec_mul(g.view(), t.view())) * toeplitz_unit_mul(h, v);
-        toeplitz_unit_mul(e, x)
+        let x = Array1::from(mat_vec_mul(&g, &t)) * toeplitz_unit_mul(&h, v);
+        toeplitz_unit_mul(&e, x)
     }
 
     fn toeplitz_test<F, G>(g: &mut G)
@@ -386,7 +834,90 @@ mod tests {
         let mut g = StdThreadGen::new(usize::max_value());
         for i in 0..100 {
             eprintln!("test {}", i);
-            toeplitz_test::<F7, _>(&mut g)
+            toeplitz_test::<GF2561D, _>(&mut g)
         }
+    }
+
+    #[test]
+    fn agarwal_cooley() {
+        let mut g = StdThreadGen::new(usize::max_value());
+        type F = F7;
+        for i in 2..20 {
+            eprintln!("i={}", i);
+            let n = i;
+            let m = i + 1;
+            eprintln!("n={},m={}", n, m);
+            let x: Vec<_> = (0..n * m).map(|_| F::arbitrary(&mut g)).collect();
+            let y: Vec<_> = (0..n * m).map(|_| F::arbitrary(&mut g)).collect();
+            let algo = ToeplitzConv(n * m);
+            let expected = algo.apply(&x)(&y);
+
+            eprintln!("eval actual...");
+            let algo = AgarwalCooley::new(n, ToeplitzConv(n), m, ToeplitzConv(m));
+            let actual = algo.apply(&x)(&y);
+            eprintln!("done");
+            assert_eq!(actual, expected, "x={:?},y={:?}", x, y);
+        }
+    }
+
+    #[test]
+    fn agarwal_cooley_fix_x() {
+        type F = GF2561D;
+        let mut g = StdThreadGen::new(usize::max_value());
+        let n1 = 3;
+        let n2 = 5;
+        let n = n1 * n2;
+        let m = 17;
+        let x: Vec<_> = (0..n * m).map(|_| F::arbitrary(&mut g)).collect();
+        let algo = ToeplitzConv(n * m);
+        let expected = algo.apply(&x);
+        let algo = AgarwalCooley::new(
+            n,
+            AgarwalCooley::new(n1, ToeplitzConv(n1), n2, ToeplitzConv(n2)),
+            m,
+            ToeplitzConv(m),
+        );
+        let actual = algo.apply(&x);
+
+        eprintln!("start");
+        for i in 1..100 {
+            eprintln!("i={}", i);
+            let y: Vec<_> = (0..n * m).map(|_| F::arbitrary(&mut g)).collect();
+            assert_eq!(expected(&y), actual(&y))
+        }
+    }
+
+    #[test]
+    fn ac_test() {
+        let n = 2;
+        let m = 3;
+        let x = vec![
+            F7::new(6),
+            F7::new(1),
+            F7::new(6),
+            F7::new(2),
+            F7::new(6),
+            F7::new(6),
+        ];
+        let y = vec![
+            F7::new(4),
+            F7::new(3),
+            F7::new(6),
+            F7::new(4),
+            F7::new(4),
+            F7::new(6),
+        ];
+        let expected = vec![
+            F7::new(4),
+            F7::new(0),
+            F7::new(4),
+            F7::new(4),
+            F7::new(4),
+            F7::new(6),
+        ];
+
+        let algo = AgarwalCooley::new(n, ToeplitzConv(n), m, ToeplitzConv(m));
+        let actual = algo.apply(&x)(&y);
+        assert_eq!(actual, expected);
     }
 }

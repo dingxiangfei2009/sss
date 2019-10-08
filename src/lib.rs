@@ -18,6 +18,7 @@ use num::{
 };
 
 pub mod conv;
+pub mod facts;
 pub mod field;
 pub mod fourier;
 pub mod lfsr;
@@ -55,27 +56,29 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
         }
     }
 
-    fn extended_gcd(self, other: Self) -> (Self, Self, Self)
+    fn extended_gcd<G, H>(self, other: Self) -> (G, H, Self)
     where
-        Self: Clone + One + Mul<Output = Self> + Sub<Output = Self>,
+        Self: Clone + One + Sub<Output = Self>,
+        G: Clone + Zero + One + Mul<Self, Output = G> + Sub<Output = G>,
+        H: Clone + Zero + One + Mul<Self, Output = H> + Sub<Output = H>,
     {
         if self.degree() < other.degree() {
             let (r, s, d) = other.extended_gcd(self);
             return (s, r, d);
         }
         if other.is_zero() {
-            return (Self::one(), Self::zero(), self);
+            return (G::one(), H::zero(), self);
         }
-        let mut s = Self::one();
-        let mut t = Self::zero();
-        let mut u = Self::zero();
-        let mut v = Self::one();
+        let mut s = G::one();
+        let mut t = H::zero();
+        let mut u = G::zero();
+        let mut v = H::one();
         let mut a = self;
         let mut b = other;
         loop {
             let (q, r) = a.div_with_rem(b.clone());
-            let i = s - q.clone() * u.clone();
-            let j = t - q.clone() * v.clone();
+            let i = s - u.clone() * q.clone();
+            let j = t - v.clone() * q.clone();
             s = u;
             t = v;
             u = i;
@@ -86,6 +89,16 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
                 return (s, t, a);
             }
         }
+    }
+}
+
+impl EuclideanDomain<usize> for usize {
+    fn degree(&self) -> usize {
+        *self
+    }
+    fn div_with_rem(self, other: usize) -> (Self, Self) {
+        let d = self / other;
+        (d, self - d * other)
     }
 }
 
@@ -461,6 +474,9 @@ pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
     let mut cosets = vec![vec![0]];
     let mut s = std::collections::BTreeSet::new();
     for i in 1..n {
+        if s.contains(&i.into()) {
+            continue;
+        }
         let mut coset = vec![];
         for p in &p_pows {
             let j = (p.clone() * i) % n;
@@ -469,9 +485,7 @@ pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
             }
             coset.push(j.to_usize().expect("size should fit"));
         }
-        if !coset.is_empty() {
-            cosets.push(coset);
-        }
+        cosets.push(coset);
     }
     cosets
 }
@@ -957,10 +971,11 @@ mod tests {
             }
             basis
         };
+        type Scalar = <GF2561D as FiniteField>::Scalar;
         let basis: Vec<_> = basis
             .into_iter()
-            .flat_map(|GF2561D(beta)| (0..deg_ext).map(move |i| GF2561D((beta >> i) & 1u8)))
-            .chain(vec![GF2561D::zero(); deg_ext])
+            .flat_map(|beta| beta.to_vec())
+            .chain(vec![Scalar::zero(); deg_ext])
             .collect();
         let basis = ndarray::ArrayView::from_shape((deg_ext + 1, deg_ext), &basis)
             .expect("shape should be correct");
@@ -968,7 +983,7 @@ mod tests {
             .into_par_iter()
             .flat_map(|i| {
                 let mut basis = basis.t().to_owned();
-                basis[[i, deg_ext]] = GF2561D::one();
+                basis[[i, deg_ext]] = Scalar::one();
                 crate::linalg::solve(basis)
                     .expect("should have a solution")
                     .to_vec()
@@ -1004,20 +1019,97 @@ mod tests {
     }
 
     #[test]
+    fn gf2561d_255th_cyclotomic_coset() {
+        assert_eq!(
+            vec![
+                vec![0],
+                vec![1, 2, 4, 8, 16, 32, 64, 128],
+                vec![3, 6, 12, 24, 48, 96, 192, 129],
+                vec![5, 10, 20, 40, 80, 160, 65, 130],
+                vec![7, 14, 28, 56, 112, 224, 193, 131],
+                vec![9, 18, 36, 72, 144, 33, 66, 132],
+                vec![11, 22, 44, 88, 176, 97, 194, 133],
+                vec![13, 26, 52, 104, 208, 161, 67, 134],
+                vec![15, 30, 60, 120, 240, 225, 195, 135],
+                vec![17, 34, 68, 136],
+                vec![19, 38, 76, 152, 49, 98, 196, 137],
+                vec![21, 42, 84, 168, 81, 162, 69, 138],
+                vec![23, 46, 92, 184, 113, 226, 197, 139],
+                vec![25, 50, 100, 200, 145, 35, 70, 140],
+                vec![27, 54, 108, 216, 177, 99, 198, 141],
+                vec![29, 58, 116, 232, 209, 163, 71, 142],
+                vec![31, 62, 124, 248, 241, 227, 199, 143],
+                vec![37, 74, 148, 41, 82, 164, 73, 146],
+                vec![39, 78, 156, 57, 114, 228, 201, 147],
+                vec![43, 86, 172, 89, 178, 101, 202, 149],
+                vec![45, 90, 180, 105, 210, 165, 75, 150],
+                vec![47, 94, 188, 121, 242, 229, 203, 151],
+                vec![51, 102, 204, 153],
+                vec![53, 106, 212, 169, 83, 166, 77, 154],
+                vec![55, 110, 220, 185, 115, 230, 205, 155],
+                vec![59, 118, 236, 217, 179, 103, 206, 157],
+                vec![61, 122, 244, 233, 211, 167, 79, 158],
+                vec![63, 126, 252, 249, 243, 231, 207, 159],
+                vec![85, 170],
+                vec![87, 174, 93, 186, 117, 234, 213, 171],
+                vec![91, 182, 109, 218, 181, 107, 214, 173],
+                vec![95, 190, 125, 250, 245, 235, 215, 175],
+                vec![111, 222, 189, 123, 246, 237, 219, 183],
+                vec![119, 238, 221, 187],
+                vec![127, 254, 253, 251, 247, 239, 223, 191]
+            ],
+            compute_cyclotomic_cosets::<GF2561D>(255)
+        )
+    }
+
+    #[test]
+    fn gf2561d_17th_cyclotomic_coset() {
+        assert_eq!(
+            vec![
+                vec![0],
+                vec![1, 2, 4, 8, 16, 15, 13, 9],
+                vec![3, 6, 12, 7, 14, 11, 5, 10]
+            ],
+            compute_cyclotomic_cosets::<GF2561D>(17)
+        )
+    }
+
+    #[test]
     fn gf2561d_subfield_16_normal_basis() {
-        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(4);
-        eprintln!("gamma={}", gamma);
-        assert_eq!(pow(gamma.clone(), 16), gamma);
+        let subfield_deg_ext = 4;
+        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(subfield_deg_ext);
+        println!("gamma={}", gamma);
+        let mut beta = gamma;
+        for _ in 0..subfield_deg_ext {
+            print!("{} ", beta);
+            beta = pow(beta, GF2561D::CHARACTERISTIC);
+        }
+        println!();
+        assert_eq!(beta, gamma);
         assert_eq!(gamma, GF2561D(0b00001010));
-        gf2561d_normal_basis_conversion(gamma, 4);
     }
 
     #[test]
     fn gf2561d_subfield_4_normal_basis() {
-        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(2);
-        eprintln!("gamma={}", gamma);
-        assert_eq!(pow(gamma.clone(), 4), gamma);
+        let subfield_deg_ext = 2;
+        let gamma = search_normal_basis::<GF2561D, GF2561DG2>(subfield_deg_ext);
+        println!("gamma={}", gamma);
+        let mut beta = gamma;
+        for _ in 0..subfield_deg_ext {
+            print!("{} ", beta);
+            beta = pow(beta, GF2561D::CHARACTERISTIC);
+        }
+        println!();
+        assert_eq!(beta, gamma);
         assert_eq!(gamma, GF2561D(0b11010110));
-        gf2561d_normal_basis_conversion(gamma, 2);
+    }
+
+    #[test]
+    fn usize_euclid() {
+        use crate::conv::R;
+        let (s, t, r) = usize::extended_gcd::<R, R>(240, 46);
+        assert_eq!(s, R(-9));
+        assert_eq!(t, R(47));
+        assert_eq!(r, 2);
     }
 }

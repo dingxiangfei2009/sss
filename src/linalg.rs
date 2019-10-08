@@ -1,6 +1,52 @@
+use std::ops::Mul;
+
 use alga::general::Field;
-use ndarray::{s, Array1, Array2, Axis, Zip};
+use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis, Zip};
+use num::Zero;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
+
+pub fn mat_vec_mul<'a, 'b, A, B>(
+    a: impl Into<ArrayView2<'a, A>>,
+    b: impl Into<ArrayView1<'b, B>>,
+) -> Vec<B>
+where
+    A: 'a + 'b + Zero + Clone + Mul<B, Output = B>,
+    B: 'a + 'b + Zero + Clone,
+{
+    let a = a.into();
+    let b = b.into();
+    assert_eq!(a.dim().1, b.dim());
+    a.axis_iter(Axis(0))
+        .map(|a| {
+            Zip::from(a)
+                .and(b)
+                .fold(B::zero(), |s, a, b| s + a.clone() * b.clone())
+        })
+        .collect()
+}
+
+pub fn mat_mat_mul<'a, 'b, A, B>(
+    a: impl Into<ArrayView2<'a, A>>,
+    b: impl Into<ArrayView2<'b, B>>,
+) -> Array2<B>
+where
+    A: 'a + 'b + Zero + Clone + Mul<B, Output = B>,
+    B: 'a + 'b + Zero + Clone,
+{
+    let a = a.into();
+    let b = b.into();
+    let (n, m) = a.dim();
+    let (m_, p) = b.dim();
+    assert_eq!(m, m_);
+    let c: Vec<_> = b
+        .axis_iter(Axis(1))
+        .flat_map(|c| mat_vec_mul(a, c))
+        .collect();
+    Array2::from_shape_vec((p, n), c)
+        .expect("shape should be correct")
+        .t()
+        .to_owned()
+}
 
 /// solve a system of linear equation with Gaussian Elimination
 pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
