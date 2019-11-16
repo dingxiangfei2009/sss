@@ -8,6 +8,7 @@ extern crate derive_more;
 
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
+    iter::repeat,
     ops::{Add, BitAnd, Mul, ShrAssign, Sub},
 };
 
@@ -23,6 +24,7 @@ pub mod field;
 pub mod fourier;
 pub mod lfsr;
 pub mod linalg;
+pub mod reed_solomon;
 
 pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
 
@@ -125,28 +127,38 @@ impl<T: Display> Display for Polynomial<T> {
 pub struct Coord<T>(pub T, pub T);
 
 impl<T: Zero> Polynomial<T> {
-    pub fn new(mut coeffs: Vec<T>) -> Self {
+    pub fn new(coeffs: impl IntoIterator<Item = T>) -> Self {
+        let mut coeffs = coeffs.into_iter().collect();
         truncate_high_degree_zeros(&mut coeffs);
         Self(coeffs)
     }
 }
 
-impl<T: Add<Output = T> + Clone + Zero> Add for Polynomial<T> {
+impl<T: Clone + Zero> Add for Polynomial<T> {
     type Output = Self;
     fn add(self, other: Self) -> Self {
-        use std::iter::repeat;
-
         let (Polynomial(left), Polynomial(right)) = (self, other);
         let max = std::cmp::max(left.len(), right.len());
         let left = left.into_iter().chain(repeat(T::zero()));
         let right = right.into_iter().chain(repeat(T::zero()));
-        Polynomial::new(left.zip(right).map(|(a, b)| a + b).take(max).collect())
+        Polynomial::new(left.zip(right).map(|(a, b)| a + b).take(max))
+    }
+}
+
+impl<T: Clone + Zero + Sub<Output = T>> Sub for Polynomial<T> {
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        let (Polynomial(left), Polynomial(right)) = (self, other);
+        let max = std::cmp::max(left.len(), right.len());
+        let left = left.into_iter().chain(repeat(T::zero()));
+        let right = right.into_iter().chain(repeat(T::zero()));
+        Polynomial::new(left.zip(right).map(|(a, b)| a - b).take(max))
     }
 }
 
 impl<T> Zero for Polynomial<T>
 where
-    T: Zero + Add<Output = T> + Clone,
+    T: Zero + Clone,
 {
     fn zero() -> Self {
         Polynomial(vec![T::zero()])
@@ -155,6 +167,15 @@ where
     fn is_zero(&self) -> bool {
         assert!(self.0.len() > 0);
         self.0.iter().all(|a| a.is_zero())
+    }
+}
+
+impl<T> One for Polynomial<T>
+where
+    T: Zero + One + Clone,
+{
+    fn one() -> Self {
+        Polynomial(vec![T::one()])
     }
 }
 
@@ -207,8 +228,8 @@ where
         if self.0.len() > 1 {
             let mut n = T::one();
             self.0.remove(0);
-            for i in 0..self.0.len() {
-                self.0[i] *= n.clone();
+            for a in &mut self.0 {
+                *a *= n.clone();
                 n += T::one();
             }
             self
@@ -268,6 +289,26 @@ where
             .expect("interpolation should return exactly one polynomial");
         truncate_high_degree_zeros(&mut w);
         Polynomial(w)
+    }
+}
+
+impl<T> Mul for Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Clone,
+{
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        let (Self(left), Self(right)) = (self, other);
+        let mut r = vec![T::zero(); left.len() + right.len()];
+        for (i, left) in left.into_iter().enumerate() {
+            for (r, r_) in r[i..]
+                .iter_mut()
+                .zip(right.iter().cloned().map(|right| left.clone() * right))
+            {
+                *r = r.clone() + r_;
+            }
+        }
+        Polynomial::new(r)
     }
 }
 
@@ -940,16 +981,14 @@ mod tests {
                 .into_iter()
                 .map(BigInt::from)
                 .map(BigRational::from_integer)
-                .map(Frac)
-                .collect(),
+                .map(Frac),
         );
         let q = Polynomial::new(
             vec![3, 8, 4]
                 .into_iter()
                 .map(BigInt::from)
                 .map(BigRational::from_integer)
-                .map(Frac)
-                .collect(),
+                .map(Frac),
         );
         let d = q.clone().gcd(p.clone());
         let (_, r) = p.div_with_rem(d.clone());

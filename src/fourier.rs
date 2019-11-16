@@ -174,6 +174,11 @@ where
     }
 }
 
+pub const GF2561DG2_UNITY_ROOT: UnityRoot<GF2561D> = UnityRoot {
+    order: 255,
+    root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
+};
+
 lazy_static! {
     pub static ref GF2561DG2_3_COSETS_CONV: Vec<Vec<usize>> = {
         crate::facts::GF2561D_3_COSETS
@@ -291,10 +296,7 @@ lazy_static! {
         Arc::pin(conv(assoc, cosets, &algos, &basis))
     };
     pub static ref GF2561DG2_255_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-        let root = UnityRoot {
-            root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-            order: 255,
-        };
+        let root = GF2561DG2_UNITY_ROOT;
         Arc::pin(cooley_tukey(
             15,
             17,
@@ -460,13 +462,7 @@ mod tests {
             map.insert(8, crate::facts::GF2561D_SUB_8_NORMAL_BASIS.to_vec());
             map
         };
-        let gamma = <F as FinitelyGenerated<GF2561DG2>>::GENERATOR;
-        let gamma = UnityRoot {
-            root: gamma,
-            order: 255,
-        }
-        .subgroup(order)
-        .root;
+        let gamma = GF2561DG2_UNITY_ROOT.subgroup(order).root;
         let mut assoc = vec![];
         for j in 0..order {
             let gamma = pow(gamma, j);
@@ -513,34 +509,19 @@ mod tests {
             Arc::pin(conv(assoc, cosets, &algos, &basis))
         };
         static ref GF2561D_3_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = UnityRoot {
-                root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-                order: 255,
-            }
-            .subgroup(3);
+            let root = GF2561DG2_UNITY_ROOT.subgroup(3);
             Arc::pin(naive(root))
         };
         static ref GF2561D_5_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = UnityRoot {
-                root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-                order: 255,
-            }
-            .subgroup(5);
+            let root = GF2561DG2_UNITY_ROOT.subgroup(5);
             Arc::pin(naive(root))
         };
         static ref GF2561D_17_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = UnityRoot {
-                root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-                order: 255,
-            }
-            .subgroup(17);
+            let root = GF2561DG2_UNITY_ROOT.subgroup(17);
             Arc::pin(naive(root))
         };
         static ref GF2561D_255_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = UnityRoot {
-                root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-                order: 255,
-            };
+            let root = GF2561DG2_UNITY_ROOT;
             Arc::pin(naive(root))
         };
     }

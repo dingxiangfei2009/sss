@@ -1,11 +1,11 @@
 pub use alga::general::Field;
 
-use crate::{Coord, Polynomial};
+use crate::{fourier::UnityRoot, pow, Polynomial};
 
+#[derive(Debug, Clone)]
 pub struct LFSR<F> {
     pub connection: Polynomial<F>,
     pub len: usize,
-    pub err_eval: Polynomial<F>,
 }
 
 /// Berlekamp Massey
@@ -98,37 +98,32 @@ where
         }
     }
     let connection = Polynomial::new(lambda);
-    let err_eval = Polynomial::new(gamma);
     assert!(connection.0.len() <= l + 1);
-    LFSR {
-        connection,
-        len: l,
-        err_eval,
-    }
+    LFSR { connection, len: l }
 }
 
-/// Forney's formula
-pub fn forney<F: Field + Clone>(lfsr: &LFSR<F>) -> impl Fn(F) -> F {
-    let LFSR {
-        connection,
-        err_eval,
-        ..
-    } = lfsr;
-    let connection = connection.clone().formal_derivative();
-    let err_eval = err_eval.clone();
-    move |x| {
-        let inv = F::one() / x.clone();
-        let Coord(_, a) = err_eval.into_coord(inv.clone());
-        let Coord(_, b) = connection.into_coord(inv);
-        -x * a / b
+pub fn berlekamp_massey_with_erasure<F>(s: &[F], erasure: &[usize], root: UnityRoot<F>) -> LFSR<F>
+where
+    F: Field + Clone + std::fmt::Debug,
+{
+    let UnityRoot { root, order: max } = root;
+    let n = s.len();
+    assert!(n <= max);
+    let mut s_poly = Polynomial::new(s.into_iter().cloned());
+    for &erasure in erasure {
+        assert!(erasure < max);
+        if erasure < n {
+            s_poly = s_poly * Polynomial(vec![F::one(), -pow(root.clone(), erasure)]);
+        }
     }
+    berlekamp_massey(&s_poly.0)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use crate::tests::F7;
+    use crate::{field::GF2561D, tests::F7};
 
     #[quickcheck]
     fn berlekamp_massey_tests(s: Vec<F7>) {
@@ -143,10 +138,12 @@ mod tests {
         } = lfsr;
         let v = v + 1;
         if s.len() < v + 1 {
+            eprintln!("s too short, bail");
             return;
         }
         let mut failures = vec![];
         for i in 1..s.len() - v {
+            eprintln!("testing i={}", i);
             let sum = lambda
                 .0
                 .clone()

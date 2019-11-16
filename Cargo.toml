@@ -12,6 +12,7 @@ rand = "0.7.2"
 num = "0.2.0"
 derive_more = "0.15.0"
 lazy_static = "1.0"
+failure = "0.1.0"
 
 [dependencies.ndarray]
 version = "0.13.0"
