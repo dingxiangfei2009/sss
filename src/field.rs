@@ -1,14 +1,109 @@
-use alga::general::{
-    AbstractField, AbstractGroup, AbstractGroupAbelian, AbstractLoop, AbstractMagma,
-    AbstractMonoid, AbstractQuasigroup, AbstractRing, AbstractRingCommutative, AbstractSemigroup,
-    Additive, Identity, Multiplicative, TwoSidedInverse,
+use std::{
+    fmt::{Display, Formatter, Result as FmtResult},
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
-use num_traits::{One, Zero};
-use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
+use alga_derive::Alga;
+use num::traits::{One, Zero};
+
+pub trait FiniteField: alga::general::Field {
+    const CHARACTERISTIC: usize;
+    const DEGREE_EXTENSION: usize;
+
+    // TODO: requires the base to have the same characteristics and degree of extension to be 1
+    /// Scalar type, with respect to some finite set of
+    /// generators of this finite field
+    type Scalar: FiniteField;
+
+    fn to_vec(&self) -> Vec<Self::Scalar>;
+    fn from_scalar(scalar: Self::Scalar) -> Self;
+}
+
+pub trait FinitelyGenerated<G> {
+    const GENERATOR: Self;
+}
+
+pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b11100111);
+pub const GF2561D_NORMAL_BASIS_SET: &[GF2561D] = &[
+    GF2561D(0b11100111), // alpha^(2^0)
+    GF2561D(0b10111111), // alpha^(2^1)
+    GF2561D(0b00101111), // alpha^(2^2)
+    GF2561D(0b00100001), // alpha^(2^3)
+    GF2561D(0b01110101), // alpha^(2^4)
+    GF2561D(0b10110101), // alpha^(2^5)
+    GF2561D(0b01101011), // alpha^(2^6)
+    GF2561D(0b11111100), // alpha^(2^7)
+];
+
+pub trait ArbitraryElement {
+    fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self;
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[alga_traits(Field(Additive, Multiplicative))]
+pub struct F2(pub u8);
 
 /// GF(2^8) with quotient 1 + x^2 + x^3 + x^4 + x^8
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[alga_traits(Field(Additive, Multiplicative))]
 pub struct GF2561D(pub u8);
+
+pub struct GF2561DG2;
+
+impl FiniteField for GF2561D {
+    const CHARACTERISTIC: usize = 2;
+    const DEGREE_EXTENSION: usize = 8;
+    type Scalar = F2;
+
+    fn to_vec(&self) -> Vec<Self::Scalar> {
+        let mut v = Vec::with_capacity(Self::DEGREE_EXTENSION);
+        let GF2561D(mut x) = *self;
+        for _ in 0..Self::DEGREE_EXTENSION {
+            v.push(F2(x & 1));
+            x >>= 1;
+        }
+        assert_eq!(x, 0);
+        v
+    }
+
+    fn from_scalar(F2(x): F2) -> Self {
+        GF2561D(x & 1)
+    }
+}
+
+impl FiniteField for F2 {
+    const CHARACTERISTIC: usize = 2;
+    const DEGREE_EXTENSION: usize = 1;
+    type Scalar = Self;
+
+    fn to_vec(&self) -> Vec<Self::Scalar> {
+        vec![F2(self.0)]
+    }
+
+    fn from_scalar(s: Self) -> Self {
+        s
+    }
+}
+
+impl Display for F2 {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FinitelyGenerated<GF2561DG2> for GF2561D {
+    const GENERATOR: Self = GF2561D(2);
+}
+
+impl ArbitraryElement for GF2561D {
+    fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self {
+        use rand::distributions::Distribution;
+
+        let u = rand::distributions::uniform::Uniform::from(0..=255);
+        GF2561D(u.sample(rng))
+    }
+}
 
 pub const ZERO: GF2561D = GF2561D(0);
 pub const ONE: GF2561D = GF2561D(1);
@@ -17,6 +112,7 @@ pub struct Tables {
     pub exp: [u8; 256],
     pub log: [u8; 256],
 }
+
 pub static TABLES: Tables = Tables {
     exp: [
         1, 2, 4, 8, 16, 32, 64, 128, 29, 58, 116, 232, 205, 135, 19, 38, 76, 152, 45, 90, 180, 117,
@@ -52,17 +148,21 @@ pub static TABLES: Tables = Tables {
 };
 
 impl Identity<Additive> for GF2561D {
+    #[inline]
     fn identity() -> Self {
         ZERO
     }
 }
+
 impl Identity<Multiplicative> for GF2561D {
+    #[inline]
     fn identity() -> Self {
         ONE
     }
 }
 
 impl AbstractMagma<Additive> for GF2561D {
+    #[inline]
     fn operate(&self, right: &Self) -> Self {
         match (self, right) {
             (GF2561D(left), GF2561D(right)) => GF2561D(left ^ right),
@@ -71,6 +171,7 @@ impl AbstractMagma<Additive> for GF2561D {
 }
 
 impl AbstractMagma<Multiplicative> for GF2561D {
+    #[inline]
     fn operate(&self, right: &Self) -> Self {
         match (*self, *right) {
             (GF2561D(0), GF2561D(_)) => GF2561D(0),
@@ -88,12 +189,14 @@ impl AbstractMagma<Multiplicative> for GF2561D {
 }
 
 impl TwoSidedInverse<Additive> for GF2561D {
+    #[inline]
     fn two_sided_inverse(&self) -> Self {
         *self
     }
 }
 
 impl TwoSidedInverse<Multiplicative> for GF2561D {
+    #[inline]
     fn two_sided_inverse(&self) -> Self {
         match *self {
             GF2561D(0) => panic!("divide by zero"),
@@ -105,44 +208,16 @@ impl TwoSidedInverse<Multiplicative> for GF2561D {
     }
 }
 
-impl AbstractQuasigroup<Multiplicative> for GF2561D {}
-
-impl AbstractLoop<Multiplicative> for GF2561D {}
-
-impl AbstractMonoid<Multiplicative> for GF2561D {}
-
-impl AbstractSemigroup<Multiplicative> for GF2561D {}
-
-impl AbstractGroup<Multiplicative> for GF2561D {}
-
-impl AbstractGroupAbelian<Multiplicative> for GF2561D {}
-
-impl AbstractQuasigroup<Additive> for GF2561D {}
-
-impl AbstractLoop<Additive> for GF2561D {}
-
-impl AbstractMonoid<Additive> for GF2561D {}
-
-impl AbstractSemigroup<Additive> for GF2561D {}
-
-impl AbstractGroup<Additive> for GF2561D {}
-
-impl AbstractGroupAbelian<Additive> for GF2561D {}
-
-impl AbstractRing<Additive, Multiplicative> for GF2561D {}
-
-impl AbstractRingCommutative<Additive, Multiplicative> for GF2561D {}
-
-impl AbstractField<Additive, Multiplicative> for GF2561D {}
-
 impl Add for GF2561D {
     type Output = Self;
+    #[inline]
     fn add(self, other: Self) -> Self {
         <Self as AbstractMagma<Additive>>::operate(&self, &other)
     }
 }
 
 impl AddAssign for GF2561D {
+    #[inline]
     fn add_assign(&mut self, other: Self) {
         *self = *self + other;
     }
@@ -150,12 +225,14 @@ impl AddAssign for GF2561D {
 
 impl Sub for GF2561D {
     type Output = Self;
+    #[inline]
     fn sub(self, other: Self) -> Self {
         <Self as AbstractMagma<Additive>>::operate(&self, &other)
     }
 }
 
 impl SubAssign for GF2561D {
+    #[inline]
     fn sub_assign(&mut self, other: Self) {
         *self = *self - other;
     }
@@ -163,6 +240,7 @@ impl SubAssign for GF2561D {
 
 impl Neg for GF2561D {
     type Output = Self;
+    #[inline]
     fn neg(self) -> Self {
         self
     }
@@ -170,12 +248,14 @@ impl Neg for GF2561D {
 
 impl Mul for GF2561D {
     type Output = Self;
+    #[inline]
     fn mul(self, other: Self) -> Self {
         <Self as AbstractMagma<Multiplicative>>::operate(&self, &other)
     }
 }
 
 impl MulAssign for GF2561D {
+    #[inline]
     fn mul_assign(&mut self, other: Self) {
         *self = *self * other;
     }
@@ -183,6 +263,7 @@ impl MulAssign for GF2561D {
 
 impl Div for GF2561D {
     type Output = Self;
+    #[inline]
     fn div(self, other: Self) -> Self {
         <Self as AbstractMagma<Multiplicative>>::operate(
             &self,
@@ -192,21 +273,169 @@ impl Div for GF2561D {
 }
 
 impl DivAssign for GF2561D {
+    #[inline]
     fn div_assign(&mut self, other: Self) {
         *self = *self / other;
     }
 }
 
 impl Zero for GF2561D {
+    #[inline]
     fn zero() -> Self {
         <Self as Identity<Additive>>::identity()
     }
+    #[inline]
     fn is_zero(&self) -> bool {
         *self == Self::zero()
     }
 }
 
 impl One for GF2561D {
+    #[inline]
+    fn one() -> Self {
+        <Self as Identity<Multiplicative>>::identity()
+    }
+}
+
+impl Display for GF2561D {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{:08b}", self.0)
+    }
+}
+
+impl Identity<Additive> for F2 {
+    #[inline]
+    fn identity() -> Self {
+        F2(0)
+    }
+}
+
+impl Identity<Multiplicative> for F2 {
+    #[inline]
+    fn identity() -> Self {
+        F2(1)
+    }
+}
+
+impl AbstractMagma<Additive> for F2 {
+    #[inline]
+    fn operate(&self, right: &Self) -> Self {
+        match (self, right) {
+            (F2(left), F2(right)) => F2(left ^ right),
+        }
+    }
+}
+
+impl AbstractMagma<Multiplicative> for F2 {
+    #[inline]
+    fn operate(&self, right: &Self) -> Self {
+        match (*self, *right) {
+            (F2(x), F2(y)) => F2(x & y),
+        }
+    }
+}
+
+impl TwoSidedInverse<Additive> for F2 {
+    #[inline]
+    fn two_sided_inverse(&self) -> Self {
+        *self
+    }
+}
+
+impl TwoSidedInverse<Multiplicative> for F2 {
+    #[inline]
+    fn two_sided_inverse(&self) -> Self {
+        match *self {
+            F2(0) => panic!("divide by zero"),
+            F2(x) => F2(x),
+        }
+    }
+}
+
+impl Add for F2 {
+    type Output = Self;
+    #[inline]
+    fn add(self, other: Self) -> Self {
+        <Self as AbstractMagma<Additive>>::operate(&self, &other)
+    }
+}
+
+impl AddAssign for F2 {
+    #[inline]
+    fn add_assign(&mut self, other: Self) {
+        *self = *self + other;
+    }
+}
+
+impl Sub for F2 {
+    type Output = Self;
+    #[inline]
+    fn sub(self, other: Self) -> Self {
+        <Self as AbstractMagma<Additive>>::operate(&self, &other)
+    }
+}
+
+impl SubAssign for F2 {
+    #[inline]
+    fn sub_assign(&mut self, other: Self) {
+        *self = *self - other;
+    }
+}
+
+impl Neg for F2 {
+    type Output = Self;
+    #[inline]
+    fn neg(self) -> Self {
+        self
+    }
+}
+
+impl Mul for F2 {
+    type Output = Self;
+    #[inline]
+    fn mul(self, other: Self) -> Self {
+        <Self as AbstractMagma<Multiplicative>>::operate(&self, &other)
+    }
+}
+
+impl MulAssign for F2 {
+    #[inline]
+    fn mul_assign(&mut self, other: Self) {
+        *self = *self * other;
+    }
+}
+
+impl Div for F2 {
+    type Output = Self;
+    #[inline]
+    fn div(self, other: Self) -> Self {
+        <Self as AbstractMagma<Multiplicative>>::operate(
+            &self,
+            &<Self as TwoSidedInverse<Multiplicative>>::two_sided_inverse(&other),
+        )
+    }
+}
+
+impl DivAssign for F2 {
+    #[inline]
+    fn div_assign(&mut self, other: Self) {
+        *self = *self / other;
+    }
+}
+
+impl Zero for F2 {
+    #[inline]
+    fn zero() -> Self {
+        <Self as Identity<Additive>>::identity()
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        *self == Self::zero()
+    }
+}
+
+impl One for F2 {
+    #[inline]
     fn one() -> Self {
         <Self as Identity<Multiplicative>>::identity()
     }
@@ -215,6 +444,8 @@ impl One for GF2561D {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use alga::general::{AbstractGroupAbelian, AbstractQuasigroup, AbstractRing};
 
     use quickcheck::Arbitrary;
 
