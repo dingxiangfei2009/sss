@@ -1,9 +1,9 @@
 use std::{
+    collections::BTreeSet,
     iter::{once, repeat},
+    ops::Deref,
     pin::Pin,
     sync::Arc,
-    collections::BTreeSet,
-    ops::Deref,
 };
 
 use alga::general::Field;
@@ -12,11 +12,13 @@ use num::{One, Zero};
 
 use crate::{field::FiniteField, fourier::UnityRoot, pow, Coord, EuclideanDomain, Polynomial};
 
+pub type FFTOp<F> = Pin<Arc<dyn Send + Sync + Fn(Vec<F>) -> Vec<F>>>;
+
 pub struct ReedSolomon<F> {
     root: UnityRoot<F>,
     data_len: usize,
     generator: Polynomial<F>,
-    fft: Pin<Arc<dyn Send + Sync + Fn(Vec<F>) -> Vec<F>>>,
+    fft: FFTOp<F>,
     correction_level: usize,
 }
 
@@ -58,6 +60,7 @@ impl<F> Deref for DecodeResult<F> {
     }
 }
 
+#[allow(clippy::many_single_char_names)] // REASON: match symbol names with textbooks and papers
 fn sugiyama<F: FiniteField + Clone>(
     syndrome: Polynomial<F>,
     t: usize,
@@ -91,8 +94,8 @@ pub fn forney<F: Field + Clone>(
     move |x| {
         let x = pow(root.clone(), x);
         let x_inv = F::one() / x.clone();
-        let Coord(_, a) = err_eval.into_coord(x_inv.clone());
-        let Coord(_, b) = err_locator.into_coord(x_inv.clone());
+        let Coord(_, a) = err_eval.eval_at(x_inv.clone());
+        let Coord(_, b) = err_locator.eval_at(x_inv.clone());
         -x.clone() * pow(x_inv, offset) * a / b
     }
 }
@@ -101,11 +104,7 @@ impl<F> ReedSolomon<F>
 where
     F: FiniteField + Clone,
 {
-    pub fn new(
-        correction_level: usize,
-        root: UnityRoot<F>,
-        fft: Pin<Arc<dyn Send + Sync + Fn(Vec<F>) -> Vec<F>>>,
-    ) -> Self {
+    pub fn new(correction_level: usize, root: UnityRoot<F>, fft: FFTOp<F>) -> Self {
         let generator_size = 2 * correction_level;
         assert!(root.order > generator_size);
         let data_len = root.order - generator_size;
@@ -131,12 +130,12 @@ where
 
     pub fn encode(&self, data: &[F]) -> Result<Vec<F>, DecodeError> {
         if data.len() != self.data_len {
-            Err(DecodeError::DataLength {
+            return Err(DecodeError::DataLength {
                 expect: self.data_len,
                 found: data.len(),
-            })?
+            });
         }
-        let Polynomial(p) = Polynomial::new(data.into_iter().cloned()) * self.generator.clone();
+        let Polynomial(p) = Polynomial::new(data.iter().cloned()) * self.generator.clone();
         assert!(p.len() <= self.root.order);
         Ok(p.into_iter()
             .chain(repeat(F::zero()))
@@ -144,26 +143,30 @@ where
             .collect())
     }
 
-    pub fn decode(&self, mut code: Vec<F>, erasure: Vec<usize>) -> Result<DecodeResult<F>, DecodeError> {
+    pub fn decode(
+        &self,
+        mut code: Vec<F>,
+        erasure: Vec<usize>,
+    ) -> Result<DecodeResult<F>, DecodeError> {
         let code_len = code.len();
         if code_len != self.root.order {
-            Err(DecodeError::CodeLength {
+            return Err(DecodeError::CodeLength {
                 expect: self.root.order,
                 found: code.len(),
-            })?
+            });
         }
         let mut erasure_poly = Polynomial::one();
 
         if erasure.len() > 2 * self.correction_level {
-            Err(DecodeError::TooManyError(self.correction_level))?
+            return Err(DecodeError::TooManyError(self.correction_level));
         }
 
         for &erasure in &erasure {
             if erasure >= code.len() {
-                Err(DecodeError::Erasure {
+                return Err(DecodeError::Erasure {
                     expect: code_len,
                     found: erasure,
-                })?
+                });
             }
             code[erasure] = F::zero();
             erasure_poly =
@@ -180,7 +183,7 @@ where
         let (err_locator, err_eval) = sugiyama(syndrome, self.correction_level, erasure.len());
 
         if err_locator.is_zero() {
-            Err(DecodeError::TooManyError(self.correction_level))?
+            return Err(DecodeError::TooManyError(self.correction_level));
         }
 
         let err_locator = err_locator * erasure_poly;
@@ -240,7 +243,7 @@ mod tests {
 
     lazy_static! {
         static ref RS_255_223: ReedSolomon<GF2561D> =
-            { ReedSolomon::new(16, GF2561DG2_UNITY_ROOT, GF2561DG2_255_FFT.clone()) };
+            ReedSolomon::new(16, GF2561DG2_UNITY_ROOT.clone(), GF2561DG2_255_FFT.clone());
     }
 
     #[test]

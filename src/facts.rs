@@ -43,22 +43,22 @@ pub const GF2561D_255_COSETS: &[&[usize]] = &[
     &[119, 238, 221, 187],
     &[127, 254, 253, 251, 247, 239, 223, 191],
 ];
-pub const GF2561D_SUB_2_NORMAL_BASIS: [GF2561D; 2] = [GF2561D(0b11010110), GF2561D(0b11010111)];
+pub const GF2561D_SUB_2_NORMAL_BASIS: [GF2561D; 2] = [GF2561D(0b1101_0110), GF2561D(0b1101_0111)];
 pub const GF2561D_SUB_4_NORMAL_BASIS: [GF2561D; 4] = [
-    GF2561D(0b00001010),
-    GF2561D(0b01000100),
-    GF2561D(0b11011101),
-    GF2561D(0b10010010),
+    GF2561D(0b0000_1010),
+    GF2561D(0b0100_0100),
+    GF2561D(0b1101_1101),
+    GF2561D(0b1001_0010),
 ];
 pub const GF2561D_SUB_8_NORMAL_BASIS: [GF2561D; 8] = [
-    GF2561D(0b11100111), // alpha^(2^0)
-    GF2561D(0b10111111), // alpha^(2^1)
-    GF2561D(0b00101111), // alpha^(2^2)
-    GF2561D(0b00100001), // alpha^(2^3)
-    GF2561D(0b01110101), // alpha^(2^4)
-    GF2561D(0b10110101), // alpha^(2^5)
-    GF2561D(0b01101011), // alpha^(2^6)
-    GF2561D(0b11111100), // alpha^(2^7)
+    GF2561D(0b1110_0111), // alpha^(2^0)
+    GF2561D(0b1011_1111), // alpha^(2^1)
+    GF2561D(0b0010_1111), // alpha^(2^2)
+    GF2561D(0b0010_0001), // alpha^(2^3)
+    GF2561D(0b0111_0101), // alpha^(2^4)
+    GF2561D(0b1011_0101), // alpha^(2^5)
+    GF2561D(0b0110_1011), // alpha^(2^6)
+    GF2561D(0b1111_1100), // alpha^(2^7)
 ];
 pub const GF2561DG2_3_ASSOC_TABLE: [[u8; 3]; 3] = [[1, 1, 1], [1, 1, 0], [1, 0, 1]];
 pub const GF2561DG2_5_ASSOC_TABLE: [[u8; 5]; 5] = [

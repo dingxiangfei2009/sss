@@ -11,7 +11,6 @@ use ndarray::{
 use num::{One, Zero};
 
 use crate::{
-    field::FiniteField,
     linalg::{mat_mat_mul, mat_vec_mul},
     EuclideanDomain,
 };
@@ -33,6 +32,7 @@ pub fn toeplitz_d(n: usize) -> Array2<i8> {
     ]
 }
 
+#[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
 pub fn toeplitz_e(n: usize) -> (usize, Array2<i8>) {
     assert!(n > 0);
     let k = n >> 1;
@@ -98,7 +98,7 @@ where
 
     {
         let mut assign_view = res.view_mut();
-        let arrays = arrays.into_iter().map(|a| a.mapv(MaybeUninit::new));
+        let arrays = arrays.iter().map(|a| a.mapv(MaybeUninit::new));
         for mut array in arrays {
             let len = array.len_of(axis);
             let (mut front, rest) = assign_view.split_at(axis, len);
@@ -118,6 +118,7 @@ where
     Ok(res)
 }
 
+#[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
 pub fn toeplitz_gh<F>(n: usize) -> (usize, Array2<F>, Array2<i8>)
 where
     F: Zero + One + Clone + Sub<Output = F> + Mul<Output = F> + Neg<Output = F>,
@@ -220,10 +221,10 @@ where
     u.into()
         .axis_iter(Axis(0))
         .map(|r| {
-            Zip::from(r).and(&v).fold(F::zero(), |a, u, v| {
-                if u > &0 {
+            Zip::from(r).and(&v).fold(F::zero(), |a, &u, v| {
+                if u > 0 {
                     a + v.clone()
-                } else if u < &0 {
+                } else if u < 0 {
                     a - v.clone()
                 } else {
                     a
@@ -396,6 +397,7 @@ pub struct AgarwalCooley<A1, A2> {
 }
 
 impl<A1, A2> AgarwalCooley<A1, A2> {
+    #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the textbook
     pub fn new(n1: usize, a1: A1, n2: usize, a2: A2) -> Self {
         assert!(n1 > 1 && n2 > 1);
         let (R(s), R(t), r) = usize::extended_gcd(n1, n2);
@@ -456,7 +458,7 @@ impl Permutation {
             assert!(r[j].is_none());
             r[j] = Some(i);
         }
-        Permutation(r.into_iter().flat_map(std::convert::identity).collect())
+        Permutation(r.into_iter().flatten().collect())
     }
 }
 
@@ -470,7 +472,7 @@ impl<F: Clone> LinearOperator<F> for Permutation {
             assert!(r[i].is_none());
             r[i] = Some(vec[j].clone())
         }
-        r.into_iter().flat_map(std::convert::identity).collect()
+        r.into_iter().flatten().collect()
     }
 
     fn source_dim(&self) -> usize {
@@ -507,6 +509,8 @@ impl<F: 'static + Field + Send + Sync> BilinearAlgorithm<F> for ToeplitzConv {
     type A = LinearProduct<ToeplitzG<F>, ConvToToeplitz>;
     type B = UnitMatrix;
     type C = UnitMatrix;
+
+    #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
     fn make_algorithm(&self) -> (Self::A, Self::B, Self::C) {
         let Self(n) = *self;
         let (m, e) = toeplitz_e(n);
@@ -628,27 +632,6 @@ where
         n >>= 1;
     }
     f
-}
-
-pub fn cyclic_conv_char<F>(mut y: Vec<F>) -> impl Fn(Vec<F>) -> Vec<F>
-where
-    F: FiniteField + Clone,
-{
-    let n = y.len();
-    assert_eq!(n, F::CHARACTERISTIC);
-    // toeplitz matrix from y
-    let mut y_ = y[1..].to_vec();
-    y_.extend(y.drain(..));
-    let y = Array1::from(y);
-    let (_, e) = toeplitz_e(n);
-    let (_, g, h) = toeplitz_gh::<F>(n);
-    let g = Array1::from(mat_vec_mul(g.view(), y.view()));
-    move |x: Vec<F>| {
-        let x = Array1::from(x);
-        let x = toeplitz_unit_mul(&h, x);
-        assert_eq!(x.len(), n);
-        toeplitz_unit_mul(&e, g.clone() * x).to_vec()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -785,6 +768,7 @@ mod tests {
         toeplitz_gh::<Frac>(10);
     }
 
+    #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
     fn toeplitz_vec_mul<F>(t: Array1<F>, v: Array1<F>) -> Array1<F>
     where
         F: Zero + One + Clone + Sub<Output = F> + Neg<Output = F>,
@@ -799,6 +783,7 @@ mod tests {
         toeplitz_unit_mul(&e, x)
     }
 
+    #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
     fn toeplitz_test<F, G>(g: &mut G)
     where
         F: PartialEq + Display + Arbitrary + Zero + One + Clone + Sub<Output = F> + Neg<Output = F>,

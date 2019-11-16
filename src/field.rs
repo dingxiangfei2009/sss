@@ -21,19 +21,19 @@ pub trait FiniteField: alga::general::Field {
 }
 
 pub trait FinitelyGenerated<G> {
-    const GENERATOR: Self;
+    fn generator() -> Self;
 }
 
-pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b11100111);
+pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b1110_0111);
 pub const GF2561D_NORMAL_BASIS_SET: &[GF2561D] = &[
-    GF2561D(0b11100111), // alpha^(2^0)
-    GF2561D(0b10111111), // alpha^(2^1)
-    GF2561D(0b00101111), // alpha^(2^2)
-    GF2561D(0b00100001), // alpha^(2^3)
-    GF2561D(0b01110101), // alpha^(2^4)
-    GF2561D(0b10110101), // alpha^(2^5)
-    GF2561D(0b01101011), // alpha^(2^6)
-    GF2561D(0b11111100), // alpha^(2^7)
+    GF2561D(0b1110_0111), // alpha^(2^0)
+    GF2561D(0b1011_1111), // alpha^(2^1)
+    GF2561D(0b0010_1111), // alpha^(2^2)
+    GF2561D(0b0010_0001), // alpha^(2^3)
+    GF2561D(0b0111_0101), // alpha^(2^4)
+    GF2561D(0b1011_0101), // alpha^(2^5)
+    GF2561D(0b0110_1011), // alpha^(2^6)
+    GF2561D(0b1111_1100), // alpha^(2^7)
 ];
 
 pub trait ArbitraryElement {
@@ -93,7 +93,9 @@ impl Display for F2 {
 }
 
 impl FinitelyGenerated<GF2561DG2> for GF2561D {
-    const GENERATOR: Self = GF2561D(2);
+    fn generator() -> GF2561D {
+        GF2561D(2)
+    }
 }
 
 impl ArbitraryElement for GF2561D {

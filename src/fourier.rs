@@ -140,7 +140,7 @@ where
     assert_eq!(cyclotomic_cosets.len(), conv_bilinear_algos.len());
     assert_eq!(cyclotomic_cosets.len(), normal_basis.len());
     let convs: Vec<_> = conv_bilinear_algos
-        .into_iter()
+        .iter()
         .zip(normal_basis)
         .zip(cyclotomic_cosets.iter().map(|c| c.len()))
         .map(|((algo, basis), size)| {
@@ -174,77 +174,62 @@ where
     }
 }
 
-pub const GF2561DG2_UNITY_ROOT: UnityRoot<GF2561D> = UnityRoot {
-    order: 255,
-    root: <GF2561D as FinitelyGenerated<GF2561DG2>>::GENERATOR,
-};
+type GF2561DFFTOP = Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>>;
 
 lazy_static! {
-    pub static ref GF2561DG2_3_COSETS_CONV: Vec<Vec<usize>> = {
-        crate::facts::GF2561D_3_COSETS
-            .into_iter()
-            .map(|v| v.to_vec())
-            .collect()
+    pub static ref GF2561DG2_UNITY_ROOT: UnityRoot<GF2561D> = UnityRoot {
+        order: 255,
+        root: <GF2561D as FinitelyGenerated<GF2561DG2>>::generator(),
     };
-    pub static ref GF2561DG2_5_COSETS_CONV: Vec<Vec<usize>> = {
-        crate::facts::GF2561D_5_COSETS
-            .into_iter()
-            .map(|v| v.to_vec())
-            .collect()
-    };
-    pub static ref GF2561DG2_17_COSETS_CONV: Vec<Vec<usize>> = {
-        crate::facts::GF2561D_17_COSETS
-            .into_iter()
-            .map(|v| v.to_vec())
-            .collect()
-    };
-    pub static ref GF2561DG2_255_COSETS_CONV: Vec<Vec<usize>> = {
-        crate::facts::GF2561D_255_COSETS
-            .into_iter()
-            .map(|v| v.to_vec())
-            .collect()
-    };
-    pub static ref GF2561DG2_3_ASSOC_CONV: Array2<F2> = {
-        Array2::from_shape_vec(
-            (3, 3),
-            crate::facts::GF2561DG2_3_ASSOC_TABLE
-                .into_iter()
-                .flat_map(|v| v.into_iter().map(|x| F2(*x)))
-                .collect(),
-        )
-        .expect("shape should be correct")
-    };
-    pub static ref GF2561DG2_5_ASSOC_CONV: Array2<F2> = {
-        Array2::from_shape_vec(
-            (5, 5),
-            crate::facts::GF2561DG2_5_ASSOC_TABLE
-                .into_iter()
-                .flat_map(|v| v.into_iter().map(|x| F2(*x)))
-                .collect(),
-        )
-        .expect("shape should be correct")
-    };
-    pub static ref GF2561DG2_17_ASSOC_CONV: Array2<F2> = {
-        Array2::from_shape_vec(
-            (17, 17),
-            crate::facts::GF2561DG2_17_ASSOC_TABLE
-                .into_iter()
-                .flat_map(|v| v.into_iter().map(|x| F2(*x)))
-                .collect(),
-        )
-        .expect("shape should be correct")
-    };
-    pub static ref GF2561DG2_255_ASSOC_CONV: Array2<F2> = {
-        Array2::from_shape_vec(
-            (255, 255),
-            crate::facts::GF2561DG2_255_ASSOC_TABLE
-                .into_iter()
-                .flat_map(|v| v.into_iter().map(|x| F2(*x)))
-                .collect(),
-        )
-        .expect("shape should be correct")
-    };
-    static ref GF2561D_3_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
+    pub static ref GF2561DG2_3_COSETS_CONV: Vec<Vec<usize>> = crate::facts::GF2561D_3_COSETS
+        .iter()
+        .map(|v| v.to_vec())
+        .collect();
+    pub static ref GF2561DG2_5_COSETS_CONV: Vec<Vec<usize>> = crate::facts::GF2561D_5_COSETS
+        .iter()
+        .map(|v| v.to_vec())
+        .collect();
+    pub static ref GF2561DG2_17_COSETS_CONV: Vec<Vec<usize>> = crate::facts::GF2561D_17_COSETS
+        .iter()
+        .map(|v| v.to_vec())
+        .collect();
+    pub static ref GF2561DG2_255_COSETS_CONV: Vec<Vec<usize>> = crate::facts::GF2561D_255_COSETS
+        .iter()
+        .map(|v| v.to_vec())
+        .collect();
+    pub static ref GF2561DG2_3_ASSOC_CONV: Array2<F2> = Array2::from_shape_vec(
+        (3, 3),
+        crate::facts::GF2561DG2_3_ASSOC_TABLE
+            .iter()
+            .flat_map(|v| v.iter().map(|&x| F2(x)))
+            .collect(),
+    )
+    .expect("shape should be correct");
+    pub static ref GF2561DG2_5_ASSOC_CONV: Array2<F2> = Array2::from_shape_vec(
+        (5, 5),
+        crate::facts::GF2561DG2_5_ASSOC_TABLE
+            .iter()
+            .flat_map(|v| v.iter().map(|&x| F2(x)))
+            .collect(),
+    )
+    .expect("shape should be correct");
+    pub static ref GF2561DG2_17_ASSOC_CONV: Array2<F2> = Array2::from_shape_vec(
+        (17, 17),
+        crate::facts::GF2561DG2_17_ASSOC_TABLE
+            .iter()
+            .flat_map(|v| v.iter().map(|&x| F2(x)))
+            .collect(),
+    )
+    .expect("shape should be correct");
+    pub static ref GF2561DG2_255_ASSOC_CONV: Array2<F2> = Array2::from_shape_vec(
+        (255, 255),
+        crate::facts::GF2561DG2_255_ASSOC_TABLE
+            .iter()
+            .flat_map(|v| v.iter().map(|&x| F2(x)))
+            .collect(),
+    )
+    .expect("shape should be correct");
+    static ref GF2561D_3_FFT: GF2561DFFTOP = {
         let assoc = GF2561DG2_3_ASSOC_CONV.clone();
         let cosets = GF2561DG2_3_COSETS_CONV.clone();
         let basis: Vec<_> = cosets
@@ -261,7 +246,7 @@ lazy_static! {
         let algos: Vec<_> = algos.iter().map(std::convert::identity).collect();
         Arc::pin(conv(assoc, cosets, &algos, &basis))
     };
-    static ref GF2561D_5_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
+    static ref GF2561D_5_FFT: GF2561DFFTOP = {
         let assoc = GF2561DG2_5_ASSOC_CONV.clone();
         let cosets = GF2561DG2_5_COSETS_CONV.clone();
         let basis: Vec<_> = cosets
@@ -278,7 +263,7 @@ lazy_static! {
         let algos: Vec<_> = algos.iter().map(std::convert::identity).collect();
         Arc::pin(conv(assoc, cosets, &algos, &basis))
     };
-    static ref GF2561D_17_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
+    static ref GF2561D_17_FFT: GF2561DFFTOP = {
         let assoc = GF2561DG2_17_ASSOC_CONV.clone();
         let cosets = GF2561DG2_17_COSETS_CONV.clone();
         let basis: Vec<_> = cosets
@@ -295,22 +280,19 @@ lazy_static! {
         let algos: Vec<_> = algos.iter().map(std::convert::identity).collect();
         Arc::pin(conv(assoc, cosets, &algos, &basis))
     };
-    pub static ref GF2561DG2_255_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-        let root = GF2561DG2_UNITY_ROOT;
-        Arc::pin(cooley_tukey(
-            15,
-            17,
-            root.clone(),
-            cooley_tukey(
-                3,
-                5,
-                root.subgroup(15),
-                |x| GF2561D_3_FFT(x),
-                |x| GF2561D_5_FFT(x),
-            ),
-            |x| GF2561D_17_FFT(x),
-        ))
-    };
+    pub static ref GF2561DG2_255_FFT: GF2561DFFTOP = Arc::pin(cooley_tukey(
+        15,
+        17,
+        GF2561DG2_UNITY_ROOT.clone(),
+        cooley_tukey(
+            3,
+            5,
+            GF2561DG2_UNITY_ROOT.clone().subgroup(15),
+            |x| GF2561D_3_FFT(x),
+            |x| GF2561D_5_FFT(x),
+        ),
+        |x| GF2561D_17_FFT(x),
+    ));
 }
 
 #[derive(Clone)]
@@ -462,7 +444,7 @@ mod tests {
             map.insert(8, crate::facts::GF2561D_SUB_8_NORMAL_BASIS.to_vec());
             map
         };
-        let gamma = GF2561DG2_UNITY_ROOT.subgroup(order).root;
+        let gamma = GF2561DG2_UNITY_ROOT.clone().subgroup(order).root;
         let mut assoc = vec![];
         for j in 0..order {
             let gamma = pow(gamma, j);
@@ -508,22 +490,14 @@ mod tests {
             let algos: Vec<_> = algos.iter().map(std::convert::identity).collect();
             Arc::pin(conv(assoc, cosets, &algos, &basis))
         };
-        static ref GF2561D_3_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = GF2561DG2_UNITY_ROOT.subgroup(3);
-            Arc::pin(naive(root))
-        };
-        static ref GF2561D_5_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = GF2561DG2_UNITY_ROOT.subgroup(5);
-            Arc::pin(naive(root))
-        };
-        static ref GF2561D_17_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = GF2561DG2_UNITY_ROOT.subgroup(17);
-            Arc::pin(naive(root))
-        };
-        static ref GF2561D_255_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> = {
-            let root = GF2561DG2_UNITY_ROOT;
-            Arc::pin(naive(root))
-        };
+        static ref GF2561D_3_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> =
+            Arc::pin(naive(GF2561DG2_UNITY_ROOT.clone().subgroup(3)));
+        static ref GF2561D_5_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> =
+            Arc::pin(naive(GF2561DG2_UNITY_ROOT.clone().subgroup(5)));
+        static ref GF2561D_17_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> =
+            Arc::pin(naive(GF2561DG2_UNITY_ROOT.clone().subgroup(17)));
+        static ref GF2561D_255_NAIVE_FFT: Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>> =
+            Arc::pin(naive(GF2561DG2_UNITY_ROOT.clone()));
     }
 
     #[test]
