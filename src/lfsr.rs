@@ -9,6 +9,7 @@ pub struct LFSR<F> {
 }
 
 /// Berlekamp Massey
+#[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the textbook
 pub fn berlekamp_massey<F>(s: &[F]) -> LFSR<F>
 where
     F: Field + Clone,
@@ -109,7 +110,7 @@ where
     let UnityRoot { root, order: max } = root;
     let n = s.len();
     assert!(n <= max);
-    let mut s_poly = Polynomial::new(s.into_iter().cloned());
+    let mut s_poly = Polynomial::new(s.iter().cloned());
     for &erasure in erasure {
         assert!(erasure < max);
         if erasure < n {
@@ -123,7 +124,7 @@ where
 mod tests {
     use super::*;
 
-    use crate::{field::GF2561D, tests::F7};
+    use crate::tests::F7;
 
     #[quickcheck]
     fn berlekamp_massey_tests(s: Vec<F7>) {

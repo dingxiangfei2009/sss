@@ -165,7 +165,7 @@ where
     }
 
     fn is_zero(&self) -> bool {
-        assert!(self.0.len() > 0);
+        assert!(!self.0.is_empty());
         self.0.iter().all(|a| a.is_zero())
     }
 }
@@ -196,6 +196,7 @@ impl<T> Polynomial<T>
 where
     T: Field + Clone,
 {
+    #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
     pub fn div(mut self, mut divisor: Self) -> (Self, Self) {
         truncate_high_degree_zeros(&mut self.0);
         truncate_high_degree_zeros(&mut divisor.0);
@@ -209,16 +210,12 @@ where
         let d_deg = d.len() - 1;
         assert!(a.len() >= d.len());
         for i in (0..a.len() - d_deg).rev() {
-            if a[i + d_deg].is_zero() {
-                quot.push(T::zero());
-            } else {
-                // this is safe because the divisor `d` is not zero
-                let q = a[i + d_deg].clone() / d[d_deg].clone();
-                for j in 0..=d_deg {
-                    a[i + j] -= d[j].clone() * q.clone();
-                }
-                quot.push(q);
+            // this is safe because the divisor `d` is not zero
+            let q = a[i + d_deg].clone() / d[d_deg].clone();
+            for j in 0..=d_deg {
+                a[i + j] -= d[j].clone() * q.clone();
             }
+            quot.push(q);
         }
         quot.reverse();
         (Polynomial(quot), Polynomial::new(a))
@@ -239,16 +236,16 @@ where
     }
 
     pub fn is_zero(&self) -> bool {
-        assert!(self.0.len() > 0);
+        assert!(!self.0.is_empty());
         self.0.iter().all(|c| c.is_zero())
     }
 
     pub fn is_one(&self) -> bool {
-        assert!(self.0.len() > 0);
+        assert!(!self.0.is_empty());
         self.0[0] == T::one() && self.0.iter().skip(1).all(Zero::is_zero)
     }
 
-    pub fn into_coord(&self, x: T) -> Coord<T> {
+    pub fn eval_at(&self, x: T) -> Coord<T> {
         let mut y = <T as Identity<Additive>>::identity();
         for a in self.0.iter().rev() {
             y *= x.clone();
@@ -257,12 +254,14 @@ where
         Coord(x, y)
     }
 
+    /// Newton's method for reconstructing polynomials from sufficient set of graph points
+    #[allow(clippy::many_single_char_names)] // REASON: match symbol names with textbooks and papers
     pub fn from_coords(c: &[Coord<T>]) -> Self
     where
         T: Eq,
     {
         let n = c.len();
-        let mut w: Vec<_> = c.into_iter().map(|c| vec![c.1.clone()]).collect();
+        let mut w: Vec<_> = c.iter().map(|c| vec![c.1.clone()]).collect();
         let zero = <T as Identity<Additive>>::identity();
         for round in 2..=n {
             let mut w_ = vec![];
@@ -299,7 +298,10 @@ where
     type Output = Self;
     fn mul(self, other: Self) -> Self {
         let (Self(left), Self(right)) = (self, other);
+        #[allow(clippy::suspicious_arithmetic_impl)]
+        // REASON: use of plus operator here is sensible
         let mut r = vec![T::zero(); left.len() + right.len()];
+        #[allow(clippy::suspicious_arithmetic_impl)] // REASON: use of operators here is sensible
         for (i, left) in left.into_iter().enumerate() {
             for (r, r_) in r[i..]
                 .iter_mut()
@@ -314,6 +316,7 @@ where
 
 /// Given a lossy graph of a polynomial of degree `threshold - 1`, with at most
 /// `(c.len() - threshold + 1) / 2` errors, recover the original polynomial
+#[allow(clippy::many_single_char_names)] // REASON: match symbol names with textbooks and papers
 pub fn error_correct<T>(c: &[Coord<T>], threshold: usize) -> Option<(Polynomial<T>, Vec<usize>)>
 where
     T: Field + Clone + Eq + Send + Sync,
@@ -327,7 +330,7 @@ where
     let k = threshold - 1;
     let max_errors = (n - k) / 2;
     let x_pows: Vec<_> = c
-        .into_iter()
+        .iter()
         .map(|Coord(x, _)| {
             let mut pows = vec![];
             let mut pow = T::one();
@@ -340,7 +343,7 @@ where
         .collect();
     let yx_pows: Vec<Vec<_>> = x_pows
         .iter()
-        .zip(c.into_iter())
+        .zip(c.iter())
         .map(|(pows, Coord(_, y))| pows.iter().map(|p| p.clone() * y.clone()).collect())
         .collect();
 
@@ -371,7 +374,7 @@ where
                     .into_par_iter()
                     .enumerate()
                     .filter_map(|(i, Coord(x, _))| {
-                        let Coord(_, y) = es.into_coord(x.clone());
+                        let Coord(_, y) = es.eval_at(x.clone());
                         if y.is_zero() {
                             Some(i)
                         } else {
@@ -463,7 +466,7 @@ where
     let exp: BigUint = (BigUint::from(F::CHARACTERISTIC).pow(F::DEGREE_EXTENSION) - 1u8)
         / (BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8);
 
-    let gamma = pow(<F as FinitelyGenerated<G>>::GENERATOR, exp);
+    let gamma = pow(<F as FinitelyGenerated<G>>::generator(), exp);
     let mut alpha = gamma.clone();
     let mut c = BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8;
     while !c.is_zero() {
@@ -551,7 +554,7 @@ mod tests {
 
         let q: Vec<_> = (1u8..=u.len() as u8 + 1)
             .map(GF2561D)
-            .map(|x| p.into_coord(x))
+            .map(|x| p.eval_at(x))
             .take(threshold)
             .collect();
         let r = Polynomial::from_coords(q.as_slice());
@@ -559,7 +562,7 @@ mod tests {
 
         let q: Vec<_> = (1u8..=u.len() as u8 + 1)
             .map(GF2561D)
-            .map(|x| p.into_coord(x))
+            .map(|x| p.eval_at(x))
             .collect();
         let r = Polynomial::from_coords(q.as_slice());
         assert_eq!(u.as_slice(), r.0.as_slice());
@@ -866,7 +869,7 @@ mod tests {
         let mut c: Vec<_> = vec![0, 1, 2, 3, 4, 5, 6]
             .into_iter()
             .map(F7)
-            .map(|x| p.into_coord(x))
+            .map(|x| p.eval_at(x))
             .collect();
         c[0].1 += F7(1);
         assert_eq!((p, vec![0]), error_correct(&c, 5).unwrap());
@@ -889,7 +892,7 @@ mod tests {
             .collect();
         let mut q: Vec<_> = (1..=255)
             .map(GF2561D)
-            .map(|x| p.into_coord(x))
+            .map(|x| p.eval_at(x))
             .take(threshold + 2 * replaces.len())
             .collect();
         for (replace, _) in replaces.iter_mut() {

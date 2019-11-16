@@ -25,6 +25,7 @@ where
         .collect()
 }
 
+#[allow(clippy::many_single_char_names)] // REASON: generic matrix notation
 pub fn mat_mat_mul<'a, 'b, A, B>(
     a: impl Into<ArrayView2<'a, A>>,
     b: impl Into<ArrayView2<'b, B>>,
@@ -62,7 +63,7 @@ pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
             let mut a = a.slice_mut(s![unknown.., ..]);
             let mut it = a.axis_iter_mut(Axis(0));
             let this_row = it.next().expect("row must exists");
-            let that_row = it.filter(|row| !row[unknown].is_zero()).next()?;
+            let that_row = it.find(|row| !row[unknown].is_zero())?;
             Zip::from(this_row).and(that_row).par_apply(std::mem::swap);
         }
         let (mut this_equation, mut rest_equations) =
@@ -89,9 +90,8 @@ pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
 
     // a is in row echelon form now
     for unknown in (1..unknowns).rev() {
-        let (mut rest_equations, this_equation) = a
-            .slice_mut(s![..unknown + 1, ..])
-            .split_at(Axis(0), unknown);
+        let (mut rest_equations, this_equation) =
+            a.slice_mut(s![..=unknown, ..]).split_at(Axis(0), unknown);
         let this_equation = this_equation.index_axis(Axis(0), 0);
         rest_equations.axis_iter_mut(Axis(0)).for_each(|eqn| {
             let scale = eqn[unknown].clone();
