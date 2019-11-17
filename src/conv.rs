@@ -1,6 +1,6 @@
 use std::{
     mem::MaybeUninit,
-    ops::{Add, BitAnd, Deref, Mul, Neg, ShrAssign, Sub},
+    ops::{Add, Deref, Mul, Neg, Sub},
     sync::Arc,
 };
 
@@ -614,24 +614,6 @@ impl<F: Clone + Zero + Sub<Output = F>> LinearOperator<F> for UnitMatrix {
     fn dest_dim(&self) -> usize {
         self.dest_dim
     }
-}
-
-pub fn int_inj<F, N>(mut n: N) -> F
-where
-    F: Zero + One + Add<Output = F> + Clone,
-    N: BitAnd<Output = N> + ShrAssign<usize> + Clone + One + Zero,
-{
-    let mut f = F::zero();
-    let mut f_ = F::one();
-    let n_one = N::one();
-    while !n.is_zero() {
-        if !(n.clone() & n_one.clone()).is_zero() {
-            f = f.clone() + f_.clone();
-        }
-        f_ = f.clone() + f_.clone();
-        n >>= 1;
-    }
-    f
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

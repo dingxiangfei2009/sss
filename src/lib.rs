@@ -22,6 +22,7 @@ pub mod conv;
 pub mod facts;
 pub mod field;
 pub mod fourier;
+pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
 pub mod reed_solomon;
@@ -32,9 +33,9 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
     /// Euclidean measure of this domain
     fn degree(&self) -> Degree;
 
-    /// Division with respect to this euclidean measure, so that the remainder
-    /// is either zero, or the degree of the remainder is less than the degree
-    /// of the divisor
+    /// Division with respect to this euclidean measure to give `(quotient, remainder)`,
+    /// so that the remainder iss either zero, or the degree of the remainder is less
+    /// than the degree of the divisor
     fn div_with_rem(self, other: Self) -> (Self, Self);
 
     fn gcd(mut self, mut other: Self) -> Self
@@ -94,14 +95,27 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
     }
 }
 
-impl EuclideanDomain<usize> for usize {
-    fn degree(&self) -> usize {
-        *self
-    }
-    fn div_with_rem(self, other: usize) -> (Self, Self) {
-        let d = self / other;
-        (d, self - d * other)
-    }
+macro_rules! impl_euclidean_domain_int {
+    () => {};
+    ($t:ty) => {
+        impl_euclidean_domain_int! {$t,}
+    };
+    ($t:ty, $($ts:tt),*) => {
+        impl EuclideanDomain<$t> for $t {
+            fn degree(&self) -> Self {
+                *self
+            }
+            fn div_with_rem(self, other: Self) -> (Self, Self) {
+                let d = self / other;
+                (d, self - d * other)
+            }
+        }
+        impl_euclidean_domain_int!($($ts),*);
+    };
+}
+
+impl_euclidean_domain_int! {
+    usize, u8, u16, u32, u64, u128
 }
 
 /// Univariate polynomial ring over a field `T`
@@ -954,18 +968,6 @@ mod tests {
                 m <<= 1;
             }
             assert!(h.insert(x));
-        }
-    }
-
-    impl EuclideanDomain<u32> for u32 {
-        fn degree(&self) -> Self {
-            *self
-        }
-
-        fn div_with_rem(mut self, other: Self) -> (Self, Self) {
-            let q = self / other;
-            self -= q * other;
-            (q, self)
         }
     }
 

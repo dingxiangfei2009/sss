@@ -6,8 +6,11 @@ use ndarray::{Array1, Array2, ArrayViewMut, Axis};
 use num::traits::{One, Zero};
 
 use crate::{
-    conv::{int_inj, BilinearAlgorithm, LinearOperator, ToeplitzConv},
-    field::{FiniteField, FinitelyGenerated, F2, GF2561D, GF2561DG2},
+    conv::{BilinearAlgorithm, LinearOperator, ToeplitzConv},
+    field::{
+        int_inj, FiniteField, FinitelyGenerated, F2, F206158430209, F206158430209G11, F40961,
+        F40961G3, GF2561D, GF2561DG2,
+    },
     linalg::mat_vec_mul,
     pow,
 };
@@ -177,6 +180,14 @@ where
 type GF2561DFFTOP = Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>>;
 
 lazy_static! {
+    pub static ref F206158430209G11_UNITY_ROOT: UnityRoot<F206158430209> = UnityRoot {
+        order: 206158430208,
+        root: <F206158430209 as FinitelyGenerated<F206158430209G11>>::generator(),
+    };
+    pub static ref F40961G3_UNITY_ROOT: UnityRoot<F40961> = UnityRoot {
+        order: 40960,
+        root: <F40961 as FinitelyGenerated<F40961G3>>::generator(),
+    };
     pub static ref GF2561DG2_UNITY_ROOT: UnityRoot<GF2561D> = UnityRoot {
         order: 255,
         root: <GF2561D as FinitelyGenerated<GF2561DG2>>::generator(),
