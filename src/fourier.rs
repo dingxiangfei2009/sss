@@ -1,4 +1,8 @@
-use std::{ops::Div, pin::Pin, sync::Arc};
+use std::{
+    ops::{Div, Neg},
+    pin::Pin,
+    sync::Arc,
+};
 
 use alga::general::Field;
 use lazy_static::lazy_static;
@@ -7,10 +11,7 @@ use num::traits::{One, Zero};
 
 use crate::{
     conv::{BilinearAlgorithm, LinearOperator, ToeplitzConv},
-    field::{
-        int_inj, FiniteField, FinitelyGenerated, F2, F206158430209, F206158430209G11, F40961,
-        F40961G3, GF2561D, GF2561DG2,
-    },
+    field::{int_inj, FiniteField, FinitelyGenerated, F2, GF2561D, GF2561DG2},
     linalg::mat_vec_mul,
     pow,
 };
@@ -139,7 +140,7 @@ where
     F: 'static + FiniteField + Clone + Send + Sync,
     BA: BilinearAlgorithm<F>,
 {
-    let p = F::CHARACTERISTIC;
+    let p = F::characteristic();
     assert_eq!(cyclotomic_cosets.len(), conv_bilinear_algos.len());
     assert_eq!(cyclotomic_cosets.len(), normal_basis.len());
     let convs: Vec<_> = conv_bilinear_algos
@@ -180,14 +181,6 @@ where
 type GF2561DFFTOP = Pin<Arc<dyn Send + Sync + Fn(Vec<GF2561D>) -> Vec<GF2561D>>>;
 
 lazy_static! {
-    pub static ref F206158430209G11_UNITY_ROOT: UnityRoot<F206158430209> = UnityRoot {
-        order: 206158430208,
-        root: <F206158430209 as FinitelyGenerated<F206158430209G11>>::generator(),
-    };
-    pub static ref F40961G3_UNITY_ROOT: UnityRoot<F40961> = UnityRoot {
-        order: 40960,
-        root: <F40961 as FinitelyGenerated<F40961G3>>::generator(),
-    };
     pub static ref GF2561DG2_UNITY_ROOT: UnityRoot<GF2561D> = UnityRoot {
         order: 255,
         root: <GF2561D as FinitelyGenerated<GF2561DG2>>::generator(),
@@ -316,7 +309,7 @@ pub struct NaiveFourierTransform<A> {
 impl<F, A> LinearOperator<F> for NaiveFourierTransform<A>
 where
     A: Fn(Vec<F>) -> Vec<F>,
-    F: Clone + One + Zero + Div<Output = F>,
+    F: Clone + One + Zero + Div<Output = F> + Neg<Output = F>,
 {
     fn op(&self, x: &[F]) -> Vec<F> {
         let mut result = (self.algo)(x.to_vec());
@@ -471,7 +464,7 @@ mod tests {
                     .collect();
                 system.extend(gamma);
                 let solution = solve(
-                    Array2::from_shape_vec((subfield_deg_ext + 1, F::DEGREE_EXTENSION), system)
+                    Array2::from_shape_vec((subfield_deg_ext + 1, F::degree_extension()), system)
                         .expect("shape should be correct")
                         .t()
                         .to_owned(),

@@ -2,23 +2,24 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    ops::{Add, AddAssign, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, ShrAssign, Sub, SubAssign},
+    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign},
 };
 
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
 use alga_derive::Alga;
 use num::traits::{One, Zero};
+use rand::RngCore;
 
-use crate::EuclideanDomain;
+use crate::{gaussian::BitPool, EuclideanDomain};
 
-pub trait FiniteField: alga::general::Field {
-    const CHARACTERISTIC: usize;
-    const DEGREE_EXTENSION: usize;
+pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
+    fn characteristic() -> M;
+    fn degree_extension() -> N;
 
     // TODO: requires the base to have the same characteristics and degree of extension to be 1
     /// Scalar type, with respect to some finite set of
     /// generators of this finite field
-    type Scalar: FiniteField;
+    type Scalar: FiniteField<M, N>;
 
     fn to_vec(&self) -> Vec<Self::Scalar>;
     fn from_scalar(scalar: Self::Scalar) -> Self;
@@ -30,20 +31,26 @@ pub trait FinitelyGenerated<G> {
 
 pub fn int_inj<F, N>(mut n: N) -> F
 where
-    F: Zero + One + Add<Output = F> + Clone,
-    N: BitAnd<Output = N> + ShrAssign<usize> + Clone + One + Zero,
+    F: Zero + One + Add<Output = F> + Clone + Neg<Output = F>,
+    N: Rem<Output = N> + DivAssign + Clone + One + Zero + Ord,
 {
+    let neg = n < N::zero();
     let mut f = F::zero();
     let mut f_ = F::one();
     let n_one = N::one();
+    let n_two = n_one.clone() + n_one.clone();
     while !n.is_zero() {
-        if !(n.clone() & n_one.clone()).is_zero() {
+        if !(n.clone() % n_two.clone()).is_zero() {
             f = f.clone() + f_.clone();
         }
-        f_ = f.clone() + f_.clone();
-        n >>= 1;
+        f_ = f_.clone() + f_.clone();
+        n /= n_two.clone();
     }
-    f
+    if neg {
+        -f
+    } else {
+        f
+    }
 }
 
 pub const GF2561D_NORMAL_BASIS: GF2561D = GF2561D(0b1110_0111);
@@ -74,14 +81,18 @@ pub struct GF2561D(pub u8);
 pub struct GF2561DG2;
 
 impl FiniteField for GF2561D {
-    const CHARACTERISTIC: usize = 2;
-    const DEGREE_EXTENSION: usize = 8;
+    fn characteristic() -> usize {
+        2
+    }
+    fn degree_extension() -> usize {
+        8
+    }
     type Scalar = F2;
 
     fn to_vec(&self) -> Vec<Self::Scalar> {
-        let mut v = Vec::with_capacity(Self::DEGREE_EXTENSION);
+        let mut v = Vec::with_capacity(Self::degree_extension());
         let GF2561D(mut x) = *self;
-        for _ in 0..Self::DEGREE_EXTENSION {
+        for _ in 0..Self::degree_extension() {
             v.push(F2(x & 1));
             x >>= 1;
         }
@@ -95,8 +106,12 @@ impl FiniteField for GF2561D {
 }
 
 impl FiniteField for F2 {
-    const CHARACTERISTIC: usize = 2;
-    const DEGREE_EXTENSION: usize = 1;
+    fn characteristic() -> usize {
+        2
+    }
+    fn degree_extension() -> usize {
+        1
+    }
     type Scalar = Self;
 
     fn to_vec(&self) -> Vec<Self::Scalar> {
@@ -465,7 +480,6 @@ impl One for F2 {
     }
 }
 
-#[derive(Debug, Copy)]
 pub struct Fp<P, V = u64, D = V> {
     value: V,
     _p: PhantomData<fn() -> (P, D)>,
@@ -476,15 +490,12 @@ impl<P, V, D> Fp<P, V, D> {
     pub fn new(value: V) -> Self
     where
         P: PrimeModulo<V>,
-        V: Zero + Ord + EuclideanDomain<D>,
+        V: Zero + EuclideanDomain<D>,
         D: Ord,
     {
         let (_, value) = value.div_with_rem(P::divisor());
-        let value = if value > V::zero() {
-            value
-        } else {
-            value + P::divisor()
-        };
+        let value = value + P::divisor();
+        let (_, value) = value.div_with_rem(P::divisor());
         Self {
             value,
             _p: PhantomData,
@@ -494,6 +505,33 @@ impl<P, V, D> Fp<P, V, D> {
     /// Project out the "inner" value
     pub fn into_inner(self) -> V {
         self.value
+    }
+
+    pub fn inner(&self) -> &V {
+        &self.value
+    }
+
+    pub fn uniform_sample<R>(rng: &mut R) -> Self
+    where
+        P: PrimeModulo<V>,
+        R: RngCore,
+        V: Zero + One + Ord + Clone + Div<Output = V> + EuclideanDomain<D>,
+        D: Ord,
+    {
+        let mut low = V::zero();
+        let mut high = P::divisor();
+        let one = V::one();
+        let two = one.clone() + one.clone();
+        let mut bit_pool = BitPool::new();
+        while low.clone() + one.clone() < high {
+            let mid = (low.clone() + high.clone()) / two.clone();
+            if bit_pool.take_bit(rng) {
+                low = mid;
+            } else {
+                high = mid;
+            }
+        }
+        Self::new(low)
     }
 }
 
@@ -524,6 +562,17 @@ where
             value: self.value.clone(),
             _p: PhantomData,
         }
+    }
+}
+
+impl<P, V, D> Copy for Fp<P, V, D> where V: Copy {}
+
+impl<P, V, D> std::fmt::Debug for Fp<P, V, D>
+where
+    V: std::fmt::Debug,
+{
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.value.fmt(formatter)
     }
 }
 
@@ -561,14 +610,12 @@ where
 impl<P, V, D> Neg for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
-    V: Ord + Clone + Add<Output = V> + EuclideanDomain<D>,
+    V: Ord + Clone + Sub<Output = V> + EuclideanDomain<D>,
     D: Ord,
 {
     type Output = Self;
     fn neg(self) -> Self::Output {
-        let Self { value, .. } = self;
-        let (_, value) = value.div_with_rem(P::divisor());
-        Self::new(value)
+        TwoSidedInverse::<Additive>::two_sided_inverse(&self)
     }
 }
 
@@ -580,13 +627,7 @@ where
 {
     type Output = Self;
     fn add(self, other: Self) -> Self::Output {
-        let (Self { value: value1, .. }, Self { value: value2, .. }) = (self, other);
-        let value: V = value1.clone() + value2.clone();
-        let (_, value) = value.div_with_rem(P::divisor());
-        Self {
-            value,
-            _p: PhantomData,
-        }
+        Self::new(self.into_inner() + other.into_inner())
     }
 }
 
@@ -625,14 +666,7 @@ where
     D: Ord,
 {
     fn two_sided_inverse(&self) -> Self {
-        if self.value.is_zero() {
-            Self::clone(self)
-        } else {
-            Self {
-                value: P::divisor() - self.value.clone(),
-                _p: PhantomData,
-            }
-        }
+        Self::new(P::divisor() - self.value.clone())
     }
 }
 
@@ -643,10 +677,7 @@ where
     D: Ord,
 {
     fn one() -> Self {
-        Self {
-            value: V::one(),
-            _p: PhantomData,
-        }
+        Self::new(V::one())
     }
 }
 
@@ -667,10 +698,7 @@ where
 {
     type Output = Self;
     fn mul(self, other: Self) -> Self::Output {
-        Self {
-            value: (self.value * other.value).div_with_rem(P::divisor()).1,
-            _p: PhantomData,
-        }
+        Self::new(self.into_inner() * other.into_inner())
     }
 }
 
@@ -685,9 +713,7 @@ where
 
 impl<P, V, D> Div for Fp<P, V, D>
 where
-    P: PrimeModulo<V>,
-    V: One + Clone + Eq + Sub<Output = V> + EuclideanDomain<D>,
-    D: Ord,
+    Self: TwoSidedInverse<Multiplicative> + Mul<Output = Self>,
 {
     type Output = Self;
 
@@ -700,13 +726,10 @@ where
 
 impl<P, V, D> DivAssign for Fp<P, V, D>
 where
-    P: PrimeModulo<V>,
-    V: One + Clone + Eq + Sub<Output = V> + EuclideanDomain<D>,
-    D: Ord,
+    Self: Div<Output = Self> + Clone,
 {
     fn div_assign(&mut self, other: Self) {
-        let inv = <_ as TwoSidedInverse<Multiplicative>>::two_sided_inverse(&other);
-        *self *= inv;
+        *self = self.clone() / other;
     }
 }
 
@@ -730,35 +753,21 @@ where
 
 impl<P, V, D> AbstractMagma<Additive> for Fp<P, V, D>
 where
-    P: PrimeModulo<V>,
-    V: Zero + Clone + EuclideanDomain<D>,
-    D: Ord,
+    Self: Add<Output = Self> + Clone,
 {
     #[inline]
     fn operate(&self, right: &Self) -> Self {
-        match (self, right) {
-            (Self { value: value1, .. }, Self { value: value2, .. }) => Self {
-                value: value1.clone() + value2.clone(),
-                _p: PhantomData,
-            },
-        }
+        self.clone() + right.clone()
     }
 }
 
 impl<P, V, D> AbstractMagma<Multiplicative> for Fp<P, V, D>
 where
-    P: PrimeModulo<V>,
-    V: One + Clone + EuclideanDomain<D>,
-    D: Ord,
+    Self: Mul<Output = Self> + Clone,
 {
     #[inline]
     fn operate(&self, right: &Self) -> Self {
-        match (self, right) {
-            (Self { value: value1, .. }, Self { value: value2, .. }) => Self {
-                value: value1.clone() * value2.clone(),
-                _p: PhantomData,
-            },
-        }
+        self.clone() * right.clone()
     }
 }
 
@@ -884,78 +893,16 @@ where
 
 impl<P, V, D> ndarray::ScalarOperand for Fp<P, V, D> where Self: 'static + Clone {}
 
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Prime40961;
-
-impl<R: From<u16>> PrimeModulo<R> for Prime40961 {
-    fn divisor() -> R {
-        R::from(40961)
-    }
-}
-
-pub type F40961 = Fp<Prime40961, u32, u32>;
-
-pub struct F40961G3;
-
-impl FiniteField for F40961 {
-    const CHARACTERISTIC: usize = 40961;
-    const DEGREE_EXTENSION: usize = 1;
-    type Scalar = Self;
-    fn to_vec(&self) -> Vec<Self::Scalar> {
-        vec![self.clone()]
-    }
-    fn from_scalar(scalar: Self::Scalar) -> Self {
-        scalar
-    }
-}
-
-impl FinitelyGenerated<F40961G3> for F40961 {
-    fn generator() -> Self {
-        F40961::new(3)
-    }
-}
-
-#[derive(PartialEq, Eq, Hash, Clone, Copy)]
-pub struct Prime206158430209;
-
-impl<R: From<u64>> PrimeModulo<R> for Prime206158430209 {
-    fn divisor() -> R {
-        R::from(206158430209)
-    }
-}
-
-pub type F206158430209 = Fp<Prime206158430209, u128, u128>;
-
-impl FiniteField for F206158430209 {
-    const CHARACTERISTIC: usize = 206158430209;
-    const DEGREE_EXTENSION: usize = 1;
-    type Scalar = Self;
-    fn to_vec(&self) -> Vec<Self::Scalar> {
-        vec![self.clone()]
-    }
-    fn from_scalar(scalar: Self::Scalar) -> Self {
-        scalar
-    }
-}
-
-pub struct F206158430209G11;
-
-impl FinitelyGenerated<F206158430209G11> for F206158430209 {
-    fn generator() -> Self {
-        Self::new(11)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use alga::general::{AbstractGroupAbelian, AbstractQuasigroup, AbstractRing};
 
-    use quickcheck::Arbitrary;
+    use quickcheck::{Arbitrary, Gen};
 
     impl Arbitrary for GF2561D {
-        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
             GF2561D(u8::arbitrary(g))
         }
     }
@@ -975,5 +922,16 @@ mod tests {
         args.0.is_zero()
             || args.1.is_zero()
             || <GF2561D as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+    }
+
+    impl<P, V, D> Arbitrary for Fp<P, V, D>
+    where
+        P: 'static + PrimeModulo<V>,
+        V: 'static + Ord + Clone + Send + Sync + Arbitrary + EuclideanDomain<D>,
+        D: 'static + Ord,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            Fp::new(V::arbitrary(g))
+        }
     }
 }
