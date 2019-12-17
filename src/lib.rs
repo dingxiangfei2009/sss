@@ -1,8 +1,9 @@
+#![type_length_limit="2000000"]
+
 #[cfg(test)]
 #[macro_use(quickcheck)]
 extern crate quickcheck_macros;
 
-#[cfg(test)]
 #[macro_use]
 extern crate derive_more;
 
@@ -22,6 +23,8 @@ pub mod conv;
 pub mod facts;
 pub mod field;
 pub mod fourier;
+pub mod gaussian;
+pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
 pub mod reed_solomon;
@@ -32,9 +35,9 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
     /// Euclidean measure of this domain
     fn degree(&self) -> Degree;
 
-    /// Division with respect to this euclidean measure, so that the remainder
-    /// is either zero, or the degree of the remainder is less than the degree
-    /// of the divisor
+    /// Division with respect to this euclidean measure to give `(quotient, remainder)`,
+    /// so that the remainder iss either zero, or the degree of the remainder is less
+    /// than the degree of the divisor
     fn div_with_rem(self, other: Self) -> (Self, Self);
 
     fn gcd(mut self, mut other: Self) -> Self
@@ -94,14 +97,27 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
     }
 }
 
-impl EuclideanDomain<usize> for usize {
-    fn degree(&self) -> usize {
-        *self
-    }
-    fn div_with_rem(self, other: usize) -> (Self, Self) {
-        let d = self / other;
-        (d, self - d * other)
-    }
+macro_rules! impl_euclidean_domain_int {
+    () => {};
+    ($t:ty) => {
+        impl_euclidean_domain_int! {$t,}
+    };
+    ($t:ty, $($ts:tt),*) => {
+        impl EuclideanDomain<$t> for $t {
+            fn degree(&self) -> Self {
+                *self
+            }
+            fn div_with_rem(self, other: Self) -> (Self, Self) {
+                let d = self / other;
+                (d, self - d * other)
+            }
+        }
+        impl_euclidean_domain_int!($($ts),*);
+    };
+}
+
+impl_euclidean_domain_int! {
+    usize, u8, u16, u32, u64, u128
 }
 
 /// Univariate polynomial ring over a field `T`
@@ -418,7 +434,7 @@ where
         if alpha.is_zero() {
             continue;
         }
-        if test_normal_basis(alpha.clone(), F::DEGREE_EXTENSION) {
+        if test_normal_basis(alpha.clone(), F::degree_extension()) {
             return alpha;
         }
     }
@@ -426,13 +442,13 @@ where
 
 fn assert_subfield<F: FiniteField>(deg_ext: usize) {
     assert_eq!(
-        F::DEGREE_EXTENSION % deg_ext,
+        F::degree_extension() % deg_ext,
         0,
         "finite field GF({}^{}) is not a subfield of GF({}^{})",
-        F::CHARACTERISTIC,
+        F::characteristic(),
         deg_ext,
-        F::CHARACTERISTIC,
-        F::DEGREE_EXTENSION
+        F::characteristic(),
+        F::degree_extension()
     );
 }
 
@@ -446,7 +462,7 @@ where
     let mut p = vec![];
     for _ in 0..deg_ext {
         p.push(beta.clone());
-        beta = pow(beta, F::CHARACTERISTIC);
+        beta = pow(beta, F::characteristic());
     }
     assert!(alpha == beta, "field element is not in the subfield");
     p.reverse();
@@ -463,12 +479,12 @@ where
 
     // the following division will produce zero remainder after the last
     // assertion
-    let exp: BigUint = (BigUint::from(F::CHARACTERISTIC).pow(F::DEGREE_EXTENSION) - 1u8)
-        / (BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8);
+    let exp: BigUint = (BigUint::from(F::characteristic()).pow(F::degree_extension()) - 1u8)
+        / (BigUint::from(F::characteristic()).pow(deg_ext) - 1u8);
 
     let gamma = pow(<F as FinitelyGenerated<G>>::generator(), exp);
     let mut alpha = gamma.clone();
-    let mut c = BigUint::from(F::CHARACTERISTIC).pow(deg_ext) - 1u8;
+    let mut c = BigUint::from(F::characteristic()).pow(deg_ext) - 1u8;
     while !c.is_zero() {
         if test_normal_basis(alpha.clone(), deg_ext) {
             return alpha;
@@ -505,9 +521,9 @@ where
 pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
     let mut q = BigUint::from(1u8);
     let mut p_pows = vec![];
-    for _ in 0..F::DEGREE_EXTENSION {
+    for _ in 0..F::degree_extension() {
         p_pows.push(q.clone());
-        q *= F::CHARACTERISTIC;
+        q *= F::characteristic();
         q %= n;
     }
     q += n - 1;
@@ -923,16 +939,16 @@ mod tests {
     #[test]
     fn gf2561d_gamma_is_normal_basis() {
         let gamma = GF2561D_NORMAL_BASIS;
-        let mut g = vec![GF2561D::zero(); GF2561D::DEGREE_EXTENSION + 1];
-        g[GF2561D::DEGREE_EXTENSION] = GF2561D::one() / GF2561D(0b00010011);
+        let mut g = vec![GF2561D::zero(); GF2561D::degree_extension() + 1];
+        g[GF2561D::degree_extension()] = GF2561D::one() / GF2561D(0b00010011);
         g[0] -= GF2561D::one() / GF2561D(0b00010011);
         let g = Polynomial::new(g);
 
         let mut beta = gamma.clone();
         let mut p = vec![];
-        for _ in 0..GF2561D::DEGREE_EXTENSION {
+        for _ in 0..GF2561D::degree_extension() {
             p.push(beta.clone());
-            beta = pow(beta, GF2561D::CHARACTERISTIC);
+            beta = pow(beta, GF2561D::characteristic());
         }
         p.reverse();
         let p = Polynomial::new(p);
@@ -954,18 +970,6 @@ mod tests {
                 m <<= 1;
             }
             assert!(h.insert(x));
-        }
-    }
-
-    impl EuclideanDomain<u32> for u32 {
-        fn degree(&self) -> Self {
-            *self
-        }
-
-        fn div_with_rem(mut self, other: Self) -> (Self, Self) {
-            let q = self / other;
-            self -= q * other;
-            (q, self)
         }
     }
 
@@ -1009,7 +1013,7 @@ mod tests {
             let mut basis = vec![];
             for _ in 0..deg_ext {
                 basis.push(gamma);
-                gamma = pow(gamma, GF2561D::CHARACTERISTIC);
+                gamma = pow(gamma, GF2561D::characteristic());
             }
             basis
         };
@@ -1042,7 +1046,7 @@ mod tests {
     fn gf2561d_gamma_normal_basis_has_conversion() {
         gf2561d_normal_basis_conversion(
             crate::field::GF2561D_NORMAL_BASIS,
-            GF2561D::DEGREE_EXTENSION,
+            GF2561D::degree_extension(),
         );
     }
 
@@ -1124,7 +1128,7 @@ mod tests {
         let mut beta = gamma;
         for _ in 0..subfield_deg_ext {
             print!("{} ", beta);
-            beta = pow(beta, GF2561D::CHARACTERISTIC);
+            beta = pow(beta, GF2561D::characteristic());
         }
         println!();
         assert_eq!(beta, gamma);
@@ -1139,7 +1143,7 @@ mod tests {
         let mut beta = gamma;
         for _ in 0..subfield_deg_ext {
             print!("{} ", beta);
-            beta = pow(beta, GF2561D::CHARACTERISTIC);
+            beta = pow(beta, GF2561D::characteristic());
         }
         println!();
         assert_eq!(beta, gamma);

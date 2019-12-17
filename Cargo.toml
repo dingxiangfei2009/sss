@@ -7,12 +7,17 @@ edition = "2018"
 [dependencies]
 alga = "0.9.1"
 alga_derive = "0.9.1"
-rayon = "1.2.0"
-rand = "0.7.2"
-num = "0.2.0"
+cached = "0.11.0"
+crossbeam = "0.7.3"
 derive_more = "0.15.0"
-lazy_static = "1.0"
 failure = "0.1.0"
+lazy_static = "1.0"
+num = "0.2.0"
+rand = "0.7.2"
+rand_distr = "0.2.2"
+rayon = "1.2.0"
+rug = "1.6.0"
+sha2 = "0.8.0"
 
 [dependencies.ndarray]
 version = "0.13.0"
@@ -22,7 +27,11 @@ features = ["rayon"]
 approx = "0.3.0"
 quickcheck = "0.8.0"
 quickcheck_macros = "0.8.0"
+rand_chacha = "0.2.1"
 
 [dev-dependencies.phf]
 version = "0.8"
 features = ["macros"]
+
+[profile.release]
+debug = true

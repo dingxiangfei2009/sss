@@ -1,4 +1,8 @@
-use std::{ops::Div, pin::Pin, sync::Arc};
+use std::{
+    ops::{Div, Neg},
+    pin::Pin,
+    sync::Arc,
+};
 
 use alga::general::Field;
 use lazy_static::lazy_static;
@@ -6,8 +10,8 @@ use ndarray::{Array1, Array2, ArrayViewMut, Axis};
 use num::traits::{One, Zero};
 
 use crate::{
-    conv::{int_inj, BilinearAlgorithm, LinearOperator, ToeplitzConv},
-    field::{FiniteField, FinitelyGenerated, F2, GF2561D, GF2561DG2},
+    conv::{BilinearAlgorithm, LinearOperator, ToeplitzConv},
+    field::{int_inj, FiniteField, FinitelyGenerated, F2, GF2561D, GF2561DG2},
     linalg::mat_vec_mul,
     pow,
 };
@@ -136,7 +140,7 @@ where
     F: 'static + FiniteField + Clone + Send + Sync,
     BA: BilinearAlgorithm<F>,
 {
-    let p = F::CHARACTERISTIC;
+    let p = F::characteristic();
     assert_eq!(cyclotomic_cosets.len(), conv_bilinear_algos.len());
     assert_eq!(cyclotomic_cosets.len(), normal_basis.len());
     let convs: Vec<_> = conv_bilinear_algos
@@ -305,7 +309,7 @@ pub struct NaiveFourierTransform<A> {
 impl<F, A> LinearOperator<F> for NaiveFourierTransform<A>
 where
     A: Fn(Vec<F>) -> Vec<F>,
-    F: Clone + One + Zero + Div<Output = F>,
+    F: Clone + One + Zero + Div<Output = F> + Neg<Output = F>,
 {
     fn op(&self, x: &[F]) -> Vec<F> {
         let mut result = (self.algo)(x.to_vec());
@@ -460,7 +464,7 @@ mod tests {
                     .collect();
                 system.extend(gamma);
                 let solution = solve(
-                    Array2::from_shape_vec((subfield_deg_ext + 1, F::DEGREE_EXTENSION), system)
+                    Array2::from_shape_vec((subfield_deg_ext + 1, F::degree_extension()), system)
                         .expect("shape should be correct")
                         .t()
                         .to_owned(),
