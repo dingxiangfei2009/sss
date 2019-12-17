@@ -155,10 +155,7 @@ impl<T> BaseSampler<T> {
             levels.push((index, blocks));
         }
 
-        Self {
-            levels,
-            values,
-        }
+        Self { levels, values }
     }
 }
 

@@ -1,4 +1,4 @@
-#![type_length_limit="2000000"]
+#![type_length_limit = "2000000"]
 
 #[cfg(test)]
 #[macro_use(quickcheck)]
