@@ -28,6 +28,7 @@ pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
 pub mod reed_solomon;
+pub mod merkle;
 
 pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
 
