@@ -1,20 +1,29 @@
 use std::{borrow::Borrow, hash::Hash, marker::PhantomData};
 
+use failure::Fail;
+
+#[derive(Clone, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
+pub struct MerkleTreeNode<T, S, H, Ho> {
+    left: Box<MerkleTree<T, S, H, Ho>>,
+    right: Box<MerkleTree<T, S, H, Ho>>,
+    depth: usize,
+    hash: Ho,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
+pub struct MerkleTreeLeaf<T, S, H, Ho> {
+    data: T,
+    proof: S,
+    hash: Option<Ho>,
+    _p: PhantomData<fn() -> H>,
+}
+
 #[derive(Clone, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub enum MerkleTree<T, S, H, Ho> {
-    Node {
-        left: Box<Self>,
-        right: Box<Self>,
-        depth: usize,
-        hash: Ho,
-    },
-    Leaf {
-        data: Option<T>,
-        proof: Option<S>,
-        hash: Option<Ho>,
-        _p: PhantomData<fn() -> H>,
-    },
+    Node(MerkleTreeNode<T, S, H, Ho>),
+    Leaf(MerkleTreeLeaf<T, S, H, Ho>),
 }
+
 impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
     fn make_leaf_hash(&mut self, hasher: &H)
     where
@@ -24,22 +33,17 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
         Ho: Eq + Hash + Clone,
     {
         match self {
-            Self::Leaf {
+            Self::Leaf(MerkleTreeLeaf {
                 data, proof, hash, ..
-            } => {
-                let data = <H as MerkleHash<T>>::hash(
-                    hasher,
-                    data.as_ref().expect("data should be present"),
-                );
-                let proof = <H as MerkleHash<S>>::hash(
-                    hasher,
-                    proof.as_ref().expect("proof should be present"),
-                );
+            }) => {
+                let data = <H as MerkleHash<T>>::hash(hasher, data);
+                let proof = <H as MerkleHash<S>>::hash(hasher, proof);
                 *hash = Some(hasher.hash((data, proof)));
             }
             _ => panic!("logical error: expecting a leaf"),
         }
     }
+
     fn new_node(mut left: Self, mut right: Self, hasher: &H) -> Self
     where
         H: MerkleHash<T, Output = Ho>
@@ -49,12 +53,12 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
     {
         let depth = match (&left, &right) {
             (
-                Self::Node {
+                Self::Node(MerkleTreeNode {
                     depth: depth_left, ..
-                },
-                Self::Node {
+                }),
+                Self::Node(MerkleTreeNode {
                     depth: depth_right, ..
-                },
+                }),
             ) => {
                 assert_eq!(depth_left, depth_right);
                 depth_left + 1
@@ -62,32 +66,32 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
             (Self::Leaf { .. }, Self::Leaf { .. }) => 1,
             _ => panic!("logical error: depth mismatch"),
         };
-        if let Self::Leaf { hash: None, .. } = left {
+        if let Self::Leaf(MerkleTreeLeaf { hash: None, .. }) = left {
             left.make_leaf_hash(hasher)
         }
-        if let Self::Leaf { hash: None, .. } = right {
+        if let Self::Leaf(MerkleTreeLeaf { hash: None, .. }) = right {
             right.make_leaf_hash(hasher)
         }
         let hash = match (&mut left, &mut right) {
             (
-                Self::Leaf {
+                Self::Leaf(MerkleTreeLeaf {
                     hash: hash_left, ..
-                },
-                Self::Leaf {
+                }),
+                Self::Leaf(MerkleTreeLeaf {
                     hash: hash_right, ..
-                },
+                }),
             ) => {
                 let hash_left = hash_left.as_ref().unwrap().clone();
                 let hash_right = hash_right.as_ref().unwrap().clone();
                 hasher.hash((hash_left, hash_right))
             }
             (
-                Self::Node {
+                Self::Node(MerkleTreeNode {
                     hash: hash_left, ..
-                },
-                Self::Node {
+                }),
+                Self::Node(MerkleTreeNode {
                     hash: hash_right, ..
-                },
+                }),
             ) => {
                 let hash_left = hash_left.clone();
                 let hash_right = hash_right.clone();
@@ -97,21 +101,21 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
         };
         let left = Box::new(left);
         let right = Box::new(right);
-        Self::Node {
+        Self::Node(MerkleTreeNode {
             left,
             right,
             depth,
             hash,
-        }
+        })
     }
 
     pub fn new_leaf(data: T, proof: S) -> Self {
-        Self::Leaf {
-            data: Some(data),
-            proof: Some(proof),
+        Self::Leaf(MerkleTreeLeaf {
+            data,
+            proof,
             hash: None,
             _p: PhantomData,
-        }
+        })
     }
 
     pub fn build_tree(leaves: Vec<Self>, hasher: &H) -> Self
@@ -122,8 +126,7 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
         Ho: Eq + Hash + Clone,
     {
         let mut len = leaves.len();
-        assert!(len > 1);
-        assert_eq!((len - 1) & len, 0);
+        assert!(len > 1 && len.is_power_of_two());
         assert!(leaves.iter().all(|node| match node {
             Self::Leaf { .. } => true,
             _ => false,
@@ -146,6 +149,73 @@ impl<T, S, H, Ho> MerkleTree<T, S, H, Ho> {
         }
         nodes.pop().unwrap()
     }
+
+    pub fn iter(&self) -> TreeIter<T, S, H, Ho> {
+        TreeIter::new(self)
+    }
+}
+
+pub struct TreeIter<'a, T, S, H, Ho> {
+    path: Vec<(&'a MerkleTree<T, S, H, Ho>, Vec<(Ho, MerkleTreeNodeType)>)>,
+}
+
+impl<'a, T, S, H, Ho> TreeIter<'a, T, S, H, Ho> {
+    fn new(root: &'a MerkleTree<T, S, H, Ho>) -> Self {
+        Self {
+            path: vec![(root, vec![])],
+        }
+    }
+}
+
+impl<'a, T, S, H, Ho> Iterator for TreeIter<'a, T, S, H, Ho>
+where
+    H: MerkleHash<T, Output = Ho> + MerkleHash<S, Output = Ho>,
+    Ho: Eq + Hash + Clone,
+{
+    type Item = MerkleTreePath<'a, 'a, T, S, H, Ho>;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            if let Some((node, mut path)) = self.path.pop() {
+                match node {
+                    MerkleTree::Leaf(MerkleTreeLeaf { data, proof, .. }) => {
+                        path.reverse();
+                        break Some(MerkleTreePath {
+                            data,
+                            proof,
+                            path,
+                            _p: PhantomData,
+                        });
+                    }
+                    MerkleTree::Node(MerkleTreeNode { left, right, .. }) => {
+                        self.path.push((right, {
+                            let mut path = path.clone();
+                            let sibling_hash = match left as &MerkleTree<_, _, _, Ho> {
+                                MerkleTree::Node(MerkleTreeNode { hash, .. }) => hash.clone(),
+                                MerkleTree::Leaf(MerkleTreeLeaf { hash, .. }) => {
+                                    hash.as_ref().expect("hash should be populated").clone()
+                                }
+                            };
+                            path.push((sibling_hash, MerkleTreeNodeType::Left));
+                            path
+                        }));
+                        self.path.push((left, {
+                            let mut path = path.clone();
+                            let sibling_hash = match right as &MerkleTree<_, _, _, Ho> {
+                                MerkleTree::Node(MerkleTreeNode { hash, .. }) => hash.clone(),
+                                MerkleTree::Leaf(MerkleTreeLeaf { hash, .. }) => {
+                                    hash.as_ref().expect("hash should be populated").clone()
+                                }
+                            };
+                            path.push((sibling_hash, MerkleTreeNodeType::Right));
+                            path
+                        }));
+                    }
+                }
+            } else {
+                break None;
+            }
+        }
+    }
 }
 
 pub trait MerkleHash<T> {
@@ -159,13 +229,14 @@ pub enum MerkleTreeNodeType {
     Right,
 }
 
+#[derive(Debug)]
 pub struct MerkleTreePath<'a, 'b, T, S, H, Ho>
 where
     H: MerkleHash<T, Output = Ho> + MerkleHash<S, Output = Ho>,
     Ho: Eq + Hash,
 {
-    data: &'a T,
-    proof: &'b S,
+    pub data: &'a T,
+    pub proof: &'b S,
     path: Vec<(Ho, MerkleTreeNodeType)>,
     _p: PhantomData<fn() -> H>,
 }
@@ -202,29 +273,49 @@ where
         }
         hash
     }
+
+    pub fn lemmas(&self) -> &[(Ho, MerkleTreeNodeType)] {
+        &self.path
+    }
 }
 
+#[derive(Debug)]
+pub struct MerkleTreeQuorumLeaf<Ho> {
+    hash: Ho,
+}
+
+#[derive(Debug)]
+pub struct MerkleTreeQuorumNode<T, S, H, Ho>
+where
+    H: MerkleHash<T, Output = Ho> + MerkleHash<S, Output = Ho>,
+    Ho: Eq + Hash,
+{
+    hash: Ho,
+    left: Box<MerkleTreeQuorum<T, S, H, Ho>>,
+    right: Box<MerkleTreeQuorum<T, S, H, Ho>>,
+    depth: usize,
+}
+
+#[derive(Debug)]
+pub struct MerkleTreeQuorumUndetermined<T, S, H, Ho> {
+    state: Option<(usize, Ho)>,
+    _p: PhantomData<fn() -> (T, S, H)>,
+}
+
+#[derive(Debug)]
 pub enum MerkleTreeQuorum<T, S, H, Ho>
 where
     H: MerkleHash<T, Output = Ho> + MerkleHash<S, Output = Ho>,
     Ho: Eq + Hash,
 {
-    Leaf {
-        hash: Ho,
-    },
-    Node {
-        hash: Ho,
-        left: Box<Self>,
-        right: Box<Self>,
-        depth: usize,
-    },
-    Undetermined {
-        state: Option<(usize, Ho)>,
-        _p: PhantomData<fn() -> (T, S, H)>,
-    },
+    Leaf(MerkleTreeQuorumLeaf<Ho>),
+    Node(MerkleTreeQuorumNode<T, S, H, Ho>),
+    Undetermined(MerkleTreeQuorumUndetermined<T, S, H, Ho>),
 }
 
+#[derive(Fail, Debug)]
 pub enum Error {
+    #[fail(display = "mismatch hash")]
     Mismatch,
 }
 
@@ -236,10 +327,10 @@ where
     S: Eq,
 {
     pub fn new() -> Self {
-        Self::Undetermined {
+        Self::Undetermined(MerkleTreeQuorumUndetermined {
             state: None,
             _p: PhantomData,
-        }
+        })
     }
 
     fn leaf(data: &T, proof: &S, hasher: &H) -> Self {
@@ -248,7 +339,7 @@ where
             <H as MerkleHash<S>>::hash(&hasher, proof),
         );
         let hash = hasher.hash(tuple);
-        Self::Leaf { hash }
+        Self::Leaf(MerkleTreeQuorumLeaf { hash })
     }
 
     fn try_admit_rec(
@@ -263,10 +354,10 @@ where
             ..
         } = path;
         match self {
-            Self::Undetermined {
+            Self::Undetermined(MerkleTreeQuorumUndetermined {
                 state: Some((depth, hash)),
                 ..
-            } if *depth == path.len() => {
+            }) if *depth == path.len() => {
                 *self = match path.pop() {
                     None => Self::leaf(data, proof, hasher),
                     Some((hash_sibling, sibling_type)) => {
@@ -282,22 +373,22 @@ where
                             },
                         )?;
                         let hash_child = match &node {
-                            Self::Node {
+                            Self::Node(MerkleTreeQuorumNode {
                                 hash: hash_child, ..
-                            } => hash_child.clone(),
-                            Self::Leaf {
+                            }) => hash_child.clone(),
+                            Self::Leaf(MerkleTreeQuorumLeaf {
                                 hash: hash_child, ..
-                            } => hash_child.clone(),
+                            }) => hash_child.clone(),
                             _ => return Err(Error::Mismatch),
                         };
 
                         let hash_expected = {
                             let tuple = match sibling_type {
                                 MerkleTreeNodeType::Left => {
-                                    (hash_child.clone(), hash_sibling.clone())
+                                    (hash_sibling.clone(), hash_child.clone())
                                 }
                                 MerkleTreeNodeType::Right => {
-                                    (hash_sibling.clone(), hash_child.clone())
+                                    (hash_child.clone(), hash_sibling.clone())
                                 }
                             };
                             hasher.hash(tuple)
@@ -305,32 +396,32 @@ where
                         if *hash != hash_expected {
                             return Err(Error::Mismatch);
                         }
-                        let sibling = Box::new(Self::Undetermined {
+                        let sibling = Box::new(Self::Undetermined(MerkleTreeQuorumUndetermined {
                             state: Some((depth - 1, hash_sibling)),
                             _p: PhantomData,
-                        });
+                        }));
                         match sibling_type {
-                            MerkleTreeNodeType::Left => Self::Node {
-                                hash: hash.clone(),
-                                depth,
-                                left: Box::new(node),
-                                right: sibling,
-                            },
-                            MerkleTreeNodeType::Right => Self::Node {
+                            MerkleTreeNodeType::Left => Self::Node(MerkleTreeQuorumNode {
                                 hash: hash.clone(),
                                 depth,
                                 right: Box::new(node),
                                 left: sibling,
-                            },
+                            }),
+                            MerkleTreeNodeType::Right => Self::Node(MerkleTreeQuorumNode {
+                                hash: hash.clone(),
+                                depth,
+                                left: Box::new(node),
+                                right: sibling,
+                            }),
                         }
                     }
                 };
                 Ok(())
             }
-            Self::Undetermined { state: None, .. } => {
+            Self::Undetermined(MerkleTreeQuorumUndetermined { state: None, .. }) => {
                 *self = match path.pop() {
                     None => Self::leaf(data, proof, hasher),
-                    Some((hash_sibling, node_type)) => {
+                    Some((hash_sibling, sibling_type)) => {
                         let depth = path.len() + 1;
                         let mut node = Self::new();
                         node.try_admit_rec(
@@ -343,49 +434,49 @@ where
                             },
                         )?;
                         let hash_child = match &node {
-                            Self::Node {
+                            Self::Node(MerkleTreeQuorumNode {
                                 hash: hash_child, ..
-                            } => hash_child.clone(),
-                            Self::Leaf {
+                            }) => hash_child.clone(),
+                            Self::Leaf(MerkleTreeQuorumLeaf {
                                 hash: hash_child, ..
-                            } => hash_child.clone(),
+                            }) => hash_child.clone(),
                             _ => return Err(Error::Mismatch),
                         };
 
                         let hash = {
-                            let tuple = match node_type {
+                            let tuple = match sibling_type {
                                 MerkleTreeNodeType::Left => {
-                                    (hash_child.clone(), hash_sibling.clone())
+                                    (hash_sibling.clone(), hash_child.clone())
                                 }
                                 MerkleTreeNodeType::Right => {
-                                    (hash_sibling.clone(), hash_child.clone())
+                                    (hash_child.clone(), hash_sibling.clone())
                                 }
                             };
                             hasher.hash(tuple)
                         };
-                        let sibling = Box::new(Self::Undetermined {
+                        let sibling = Box::new(Self::Undetermined(MerkleTreeQuorumUndetermined {
                             state: Some((depth - 1, hash_sibling)),
                             _p: PhantomData,
-                        });
-                        match node_type {
-                            MerkleTreeNodeType::Left => Self::Node {
-                                hash: hash.clone(),
-                                depth,
-                                left: Box::new(node),
-                                right: sibling,
-                            },
-                            MerkleTreeNodeType::Right => Self::Node {
+                        }));
+                        match sibling_type {
+                            MerkleTreeNodeType::Left => Self::Node(MerkleTreeQuorumNode {
                                 hash: hash.clone(),
                                 depth,
                                 right: Box::new(node),
                                 left: sibling,
-                            },
+                            }),
+                            MerkleTreeNodeType::Right => Self::Node(MerkleTreeQuorumNode {
+                                hash: hash.clone(),
+                                depth,
+                                left: Box::new(node),
+                                right: sibling,
+                            }),
                         }
                     }
                 };
                 Ok(())
             }
-            Self::Leaf { hash: hash_quorom } => {
+            Self::Leaf(MerkleTreeQuorumLeaf { hash: hash_quorom }) => {
                 let tuple: (Ho, Ho) = (
                     <H as MerkleHash<T>>::hash(&hasher, data),
                     <H as MerkleHash<S>>::hash(&hasher, proof),
@@ -397,9 +488,9 @@ where
                     Err(Error::Mismatch)
                 }
             }
-            Self::Node {
+            Self::Node(MerkleTreeQuorumNode {
                 left, right, depth, ..
-            } => match path.pop() {
+            }) => match path.pop() {
                 None => Err(Error::Mismatch),
                 Some((hash_sibling, node_type)) => {
                     let (child, sibling) = match node_type {
@@ -407,10 +498,10 @@ where
                         MerkleTreeNodeType::Right => (&mut *left, &mut *right),
                     };
                     match sibling.as_ref() {
-                        Self::Leaf {
+                        Self::Leaf(MerkleTreeQuorumLeaf {
                             hash: sibling_hash_expected,
                             ..
-                        } if *depth == 1 && *sibling_hash_expected == hash_sibling => child
+                        }) if *depth == 1 && *sibling_hash_expected == hash_sibling => child
                             .try_admit_rec(
                                 hasher,
                                 MerkleTreePath {
@@ -420,11 +511,11 @@ where
                                     _p: PhantomData,
                                 },
                             ),
-                        Self::Node {
+                        Self::Node(MerkleTreeQuorumNode {
                             depth: sibling_depth,
                             hash: sibling_hash_expected,
                             ..
-                        } if sibling_depth + 1 == *depth
+                        }) if sibling_depth + 1 == *depth
                             && *sibling_hash_expected == hash_sibling =>
                         {
                             child.try_admit_rec(
@@ -437,10 +528,10 @@ where
                                 },
                             )
                         }
-                        Self::Undetermined {
+                        Self::Undetermined(MerkleTreeQuorumUndetermined {
                             state: Some((sibling_depth, sibling_hash_expected)),
                             ..
-                        } if sibling_depth + 1 == *depth
+                        }) if sibling_depth + 1 == *depth
                             && *sibling_hash_expected == hash_sibling =>
                         {
                             child.try_admit_rec(
@@ -467,5 +558,55 @@ where
         path: MerkleTreePath<T, S, H, Ho>,
     ) -> Result<(), Error> {
         self.try_admit_rec(hasher, path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sha2::{
+        digest::{FixedOutput, Input},
+        Sha256,
+    };
+
+    #[derive(Debug)]
+    struct MyHasher(u64);
+
+    impl MerkleHash<u8> for MyHasher {
+        type Output = Vec<u8>;
+        fn hash<S: Borrow<u8>>(&self, data: S) -> Self::Output {
+            let mut d = Sha256::default();
+            d.input(self.0.to_le_bytes());
+            d.input(data.borrow().to_le_bytes());
+            d.fixed_result().into_iter().collect()
+        }
+    }
+    impl MerkleHash<(Vec<u8>, Vec<u8>)> for MyHasher {
+        type Output = Vec<u8>;
+        fn hash<S: Borrow<(Vec<u8>, Vec<u8>)>>(&self, data: S) -> Self::Output {
+            let mut d = Sha256::default();
+            d.input(self.0.to_le_bytes());
+            let (a, b) = data.borrow();
+            d.input(a);
+            d.input(b", with another ");
+            d.input(b);
+            d.fixed_result().into_iter().collect()
+        }
+    }
+
+    #[test]
+    fn it_works() {
+        let hasher = MyHasher(202);
+        let leaves: Vec<_> = (0..16)
+            .map(|idx| MerkleTree::new_leaf(idx, idx + 5))
+            .collect();
+        let tree = MerkleTree::build_tree(leaves, &hasher);
+        let mut quorum = MerkleTreeQuorum::new();
+        for path in tree.iter() {
+            println!("{:?}", path);
+            quorum.try_admit(&hasher, path).unwrap();
+            println!("quorum={:?}", quorum);
+        }
     }
 }
