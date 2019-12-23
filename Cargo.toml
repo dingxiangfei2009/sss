@@ -17,8 +17,19 @@ num = "0.2.0"
 rand = "0.7.2"
 rand_distr = "0.2.2"
 rayon = "1.2.0"
-rug = "1.6.0"
 sha2 = "0.8.0"
+
+[dependencies.bitvec]
+version = "0.16.0"
+features = ["serde"]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.rug]
+version = "1.6.0"
+features = ["serde"]
 
 [dependencies.ndarray]
 version = "0.13.0"
@@ -29,10 +40,8 @@ approx = "0.3.0"
 quickcheck = "0.8.0"
 quickcheck_macros = "0.8.0"
 rand_chacha = "0.2.1"
+serde_json = "1.0.0"
 
 [dev-dependencies.phf]
 version = "0.8"
 features = ["macros"]
-
-[profile.release]
-debug = true
