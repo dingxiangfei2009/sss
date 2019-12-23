@@ -9,11 +9,11 @@
 //! gamma = sigma = 4
 
 use std::{
-    fmt::{Debug, Formatter, Result as FmtResult},
+    fmt::{Debug, Display, Formatter, Result as FmtResult},
     iter::repeat_with,
     marker::PhantomData,
     mem::{transmute, MaybeUninit},
-    ops::{AddAssign, Div, DivAssign, Mul, Rem, ShlAssign},
+    ops::{AddAssign, Deref, DerefMut, Div, DivAssign, Mul, Rem, ShlAssign},
     pin::Pin,
     sync::Arc,
 };
@@ -23,6 +23,11 @@ use ndarray::Array1;
 use num::{One, Zero};
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rug::{Float, Integer};
+use serde::{
+    de::{Deserializer, Error as DeserializeError, SeqAccess, Visitor},
+    ser::{SerializeSeq, Serializer},
+    Deserialize, Serialize,
+};
 
 use crate::{
     field::{int_inj, FiniteField, Fp, PrimeModulo},
@@ -52,6 +57,9 @@ use crate::{
     Sub,
     SubAssign,
     Rem,
+    Serialize,
+    Deserialize,
+    Display,
 )]
 pub struct Int(Integer);
 
@@ -172,7 +180,82 @@ lazy_static! {
     };
 }
 
-type Poly = [F; KEY_SIZE];
+#[derive(Clone)]
+pub struct Poly([F; KEY_SIZE]);
+
+impl Debug for Poly {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "[{:?}", self[0])?;
+        for a in &self[1..] {
+            write!(f, ", {:?}", a)?;
+        }
+        write!(f, "]")
+    }
+}
+
+impl Display for Poly {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "[{}", self[0])?;
+        for a in &self[1..] {
+            write!(f, ", {}", a)?;
+        }
+        write!(f, "]")
+    }
+}
+
+impl PartialEq for Poly {
+    fn eq(&self, other: &Self) -> bool {
+        self.iter().zip(other.iter()).all(|(a, b)| a == b)
+    }
+}
+
+impl Deref for Poly {
+    type Target = [F; KEY_SIZE];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for Poly {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Serialize for Poly {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut seq = s.serialize_seq(Some(KEY_SIZE))?;
+        for e in self.0.iter() {
+            seq.serialize_element(e)?;
+        }
+        seq.end()
+    }
+}
+
+struct PolyVisitor;
+impl<'a> Visitor<'a> for PolyVisitor {
+    type Value = Poly;
+    fn expecting(&self, fmt: &mut Formatter) -> FmtResult {
+        write!(fmt, "polynomial in requested field")
+    }
+
+    fn visit_seq<V: SeqAccess<'a>>(self, mut seq: V) -> Result<Self::Value, V::Error> {
+        let mut v = vec![];
+        for _ in 0..KEY_SIZE {
+            v.push(
+                seq.next_element()?
+                    .ok_or(V::Error::custom("incorrect length"))?,
+            )
+        }
+        Ok(vec_to_poly(v))
+    }
+}
+
+impl<'a> Deserialize<'a> for Poly {
+    fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
+        d.deserialize_seq(PolyVisitor)
+    }
+}
 
 fn poly_to_bytes(poly: &Poly) -> Vec<u8> {
     poly[..]
@@ -194,7 +277,7 @@ fn generate_poly(mut f: impl FnMut(usize) -> F) -> Poly {
     unsafe { transmute(init) }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
 pub struct Init(Poly);
 
 impl Init {
@@ -255,7 +338,7 @@ fn construct_fft_2_12() -> ArcFFTOP {
     ))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PrivateKey(Poly);
 
 fn vec_to_poly(a: Vec<F>) -> Poly {
@@ -310,7 +393,7 @@ lazy_static! {
     static ref F_KEY_SIZE: F = int_inj(KEY_SIZE);
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct PublicKey(Poly);
 
 fn poly_mul_mod(a: Poly, b: Poly) -> Poly {
@@ -343,9 +426,9 @@ pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R, Init(init): &Init) -> (Privat
     (PrivateKey(s), PublicKey(public))
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SessionKeyPart(Poly);
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct SessionKeyPartR(Poly);
 
 pub struct SessionKeyPartParallelSampler<R>(ParallelGenericSampler<R>);
@@ -596,6 +679,33 @@ impl SessionKeyPartMix<Boris> {
 }
 
 pub struct Reconciliator([bool; KEY_SIZE]);
+
+impl Serialize for Reconciliator {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use bitvec::prelude::*;
+        let mut v = BitVec::<LittleEndian, u64>::new();
+        v.extend(self.0.iter().copied());
+        v.serialize(s)
+    }
+}
+
+impl<'a> Deserialize<'a> for Reconciliator {
+    fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
+        use bitvec::prelude::*;
+        let v = BitVec::<LittleEndian, u64>::deserialize(d)?;
+        if v.len() == KEY_SIZE {
+            let mut r: [MaybeUninit<bool>; KEY_SIZE] =
+                unsafe { MaybeUninit::uninit().assume_init() };
+            for (r, v) in r.iter_mut().zip(&v) {
+                unsafe { r.as_mut_ptr().write(*v) }
+            }
+            Ok(Self(unsafe { transmute(r) }))
+        } else {
+            Err(D::Error::custom("length mismatch"))
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct SharedKey([bool; KEY_SIZE]);
 
@@ -818,5 +928,14 @@ mod tests {
         let c_expected = P(vec_to_poly(c_expected));
 
         assert_eq!(c_actual, c_expected);
+    }
+
+    #[test]
+    fn serde() {
+        let mut rng = StdRng::from_entropy();
+        let init = Init::new(&mut rng);
+        let se = serde_json::to_string(&init).unwrap();
+        let init_: Init = serde_json::from_str(&se).unwrap();
+        assert_eq!(init, init_);
     }
 }

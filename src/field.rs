@@ -9,6 +9,7 @@ use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedI
 use alga_derive::Alga;
 use num::traits::{One, Zero};
 use rand::RngCore;
+use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
 use crate::{gaussian::BitPool, EuclideanDomain};
 
@@ -485,6 +486,26 @@ pub struct Fp<P, V = u64, D = V> {
     _p: PhantomData<fn() -> (P, D)>,
 }
 
+#[derive(Default)]
+pub struct FpVisitor<V>(PhantomData<fn() -> V>);
+
+impl<P, V: Serialize, D> Serialize for Fp<P, V, D> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.value.serialize(s)
+    }
+}
+
+impl<'a, P, V, D> Deserialize<'a> for Fp<P, V, D>
+where
+    P: PrimeModulo<V>,
+    V: Deserialize<'a> + Zero + EuclideanDomain<D>,
+    D: Ord,
+{
+    fn deserialize<De: Deserializer<'a>>(d: De) -> Result<Self, De::Error> {
+        Ok(Self::new(V::deserialize(d)?))
+    }
+}
+
 impl<P, V, D> Fp<P, V, D> {
     /// Inject onto a Fp value
     pub fn new(value: V) -> Self
@@ -571,7 +592,16 @@ impl<P, V, D> std::fmt::Debug for Fp<P, V, D>
 where
     V: std::fmt::Debug,
 {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+    fn fmt(&self, formatter: &mut Formatter) -> FmtResult {
+        self.value.fmt(formatter)
+    }
+}
+
+impl<P, V, D> Display for Fp<P, V, D>
+where
+    V: Display,
+{
+    fn fmt(&self, formatter: &mut Formatter) -> FmtResult {
         self.value.fmt(formatter)
     }
 }
