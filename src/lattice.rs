@@ -434,13 +434,18 @@ pub struct SessionKeyPartR(Poly);
 pub struct SessionKeyPartParallelSampler<R>(ParallelGenericSampler<R>);
 
 impl SessionKeyPart {
-    pub fn parallel_sampler<R>() -> SessionKeyPartParallelSampler<R>
+    pub fn parallel_sampler<R>(
+        parallelism: usize,
+        buffer: usize,
+    ) -> SessionKeyPartParallelSampler<R>
     where
         R: CryptoRng + RngCore + SeedableRng + Send + 'static,
     {
         SessionKeyPartParallelSampler(ParallelGenericSampler::new(
-            repeat_with(|| R::from_entropy()).take(32).collect(),
-            1024,
+            repeat_with(|| R::from_entropy())
+                .take(parallelism)
+                .collect(),
+            buffer,
             Float::with_val(PRECISION, 0),
             SIGMA_B.clone(),
             5,
@@ -745,14 +750,19 @@ impl Debug for SharedKey {
 }
 
 impl<P> SessionKeyPartMix<P> {
-    pub fn parallel_sampler<R>() -> SessionKeyPartMixParallelSampler<R, P>
+    pub fn parallel_sampler<R>(
+        parallelism: usize,
+        buffer: usize,
+    ) -> SessionKeyPartMixParallelSampler<R, P>
     where
         R: CryptoRng + RngCore + SeedableRng + Send + 'static,
     {
         SessionKeyPartMixParallelSampler(
             ParallelGenericSampler::new(
-                repeat_with(|| R::from_entropy()).take(32).collect(),
-                1024,
+                repeat_with(|| R::from_entropy())
+                    .take(parallelism)
+                    .collect(),
+                buffer,
                 Float::with_val(PRECISION, 0),
                 SIGMA_B.clone(),
                 5,
@@ -795,10 +805,11 @@ mod tests {
 
     #[test]
     fn key_ex_works() {
-        let session_key_sampler = SessionKeyPart::parallel_sampler::<StdRng>();
-        let session_key_mix_sampler_anke = SessionKeyPartMix::<Anke>::parallel_sampler::<StdRng>();
+        let session_key_sampler = SessionKeyPart::parallel_sampler::<StdRng>(2, 1024);
+        let session_key_mix_sampler_anke =
+            SessionKeyPartMix::<Anke>::parallel_sampler::<StdRng>(2, 1024);
         let session_key_mix_sampler_boris =
-            SessionKeyPartMix::<Boris>::parallel_sampler::<StdRng>();
+            SessionKeyPartMix::<Boris>::parallel_sampler::<StdRng>(2, 1024);
         let mut rng = StdRng::from_entropy();
         let init = Init::new(&mut rng);
         let (anke_pri, anke_pub) = keygen(&mut rng, &init);
