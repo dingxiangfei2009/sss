@@ -18,9 +18,11 @@ fn test() {
 }
 
 fn key_exchange() {
-    let session_key_sampler = SessionKeyPart::parallel_sampler::<StdRng>();
-    let session_key_mix_sampler_anke = SessionKeyPartMix::<Anke>::parallel_sampler::<StdRng>();
-    let session_key_mix_sampler_boris = SessionKeyPartMix::<Boris>::parallel_sampler::<StdRng>();
+    let session_key_sampler = SessionKeyPart::parallel_sampler::<StdRng>(2, 1024);
+    let session_key_mix_sampler_anke =
+        SessionKeyPartMix::<Anke>::parallel_sampler::<StdRng>(2, 1024);
+    let session_key_mix_sampler_boris =
+        SessionKeyPartMix::<Boris>::parallel_sampler::<StdRng>(2, 1024);
     let mut rng = StdRng::from_entropy();
     let init = Init::new(&mut rng);
     let (anke_pri, anke_pub) = keygen(&mut rng, &init);
