@@ -10,6 +10,7 @@
 
 use std::{
     fmt::{Debug, Display, Formatter, Result as FmtResult},
+    hash::{Hash, Hasher},
     iter::repeat_with,
     marker::PhantomData,
     mem::{transmute, MaybeUninit},
@@ -62,6 +63,12 @@ use crate::{
     Display,
 )]
 pub struct Int(Integer);
+
+impl Hash for Int {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        self.0.hash(h)
+    }
+}
 
 impl From<u16> for Int {
     fn from(x: u16) -> Self {
@@ -183,6 +190,14 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Poly([F; KEY_SIZE]);
 
+impl Hash for Poly {
+    fn hash<H: Hasher>(&self, h: &mut H) {
+        for x in self.0.iter() {
+            x.hash(h)
+        }
+    }
+}
+
 impl Debug for Poly {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "[{:?}", self[0])?;
@@ -208,6 +223,8 @@ impl PartialEq for Poly {
         self.iter().zip(other.iter()).all(|(a, b)| a == b)
     }
 }
+
+impl Eq for Poly {}
 
 impl Deref for Poly {
     type Target = [F; KEY_SIZE];
@@ -793,6 +810,222 @@ impl<P> SessionKeyPartMix<P> {
     }
 }
 
+pub const SIGN_K: u128 = 1u128 << 68;
+
+#[derive(Serialize, Deserialize, Clone, Debug, Hash)]
+pub struct SigningKey(Poly, Poly);
+
+#[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct VerificationKey(Poly);
+
+impl VerificationKey {
+    pub fn verify<D: AsRef<[u8]>, H>(
+        &self,
+        data: D,
+        Signature { z_1, z_2, c, k }: Signature,
+        Init(a): &Init,
+        h: H,
+    ) -> bool
+    where
+        H: Fn(Vec<u8>) -> Vec<u8>,
+    {
+        let check = SigningKey::checker(&k);
+        let mut result = z_1.iter().all(&check);
+        result &= z_2.iter().all(&check);
+        let mut p = poly_mul_mod(self.0.clone(), c.clone());
+        for p in p.iter_mut() {
+            *p = -p.clone()
+        }
+        let p =
+            SigningKey::reduce_quot(poly_add(poly_mul_mod(a.clone(), z_1), poly_add(z_2, p)), &k);
+        let c_expect = SigningKey::hash(data.as_ref(), &p, h);
+        result &= c == c_expect;
+        result
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
+pub struct Signature {
+    z_1: Poly,
+    z_2: Poly,
+    c: Poly,
+    k: Integer,
+}
+
+impl SigningKey {
+    pub fn generate<R: CryptoRng + RngCore>(rng: &mut R) -> Self {
+        let mut bit_pool = crate::gaussian::BitPool::new();
+        let s_1 = generate_poly(|_| {
+            if bit_pool.take_bit(rng) {
+                F::one()
+            } else {
+                F::zero()
+            }
+        });
+        let s_2 = generate_poly(|_| {
+            if bit_pool.take_bit(rng) {
+                F::one()
+            } else {
+                F::zero()
+            }
+        });
+        Self(s_1, s_2)
+    }
+
+    pub fn verification_key(&self, Init(a): &Init) -> VerificationKey {
+        let Self(s_1, s_2) = self;
+        VerificationKey(poly_add(s_2.clone(), poly_mul_mod(a.clone(), s_1.clone())))
+    }
+
+    fn hash<H>(data: &[u8], poly: &Poly, h: H) -> Poly
+    where
+        H: Fn(Vec<u8>) -> Vec<u8>,
+    {
+        let mut result = generate_poly(|_| F::zero());
+        let mut input = vec![];
+        input.extend(b"data=");
+        input.extend_from_slice(data);
+        input.extend(b", poly=");
+        input.extend(poly_to_bytes(poly));
+        let input = h(input);
+        let mut v = bitvec::vec::BitVec::<bitvec::cursor::LittleEndian, _>::from_slice(&input);
+        match v.len() % 5 {
+            0 => (),
+            m => v.resize(v.len() + 5 - m, false),
+        }
+        for c in v.chunks(5) {
+            let idx = c[1] as usize
+                | ((c[2] as usize) << 1)
+                | ((c[3] as usize) << 2)
+                | ((c[4] as usize) << 3);
+            if c[0] {
+                result[idx] = F::one()
+            } else {
+                result[idx] = -F::one()
+            }
+        }
+        result
+    }
+
+    fn compress(y: Poly, z: Poly, k: Integer) -> Option<Poly> {
+        let mut uncompressed = 0usize;
+        let p = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let p_mid: Integer = (p.clone() - 1) / 2;
+        let pos_k: F = int_inj(Int(k.clone()));
+        let neg_k = -pos_k.clone();
+        let z_ = generate_poly({
+            let p = p.clone();
+            let k = k.clone();
+            let k_2_plus_1: Integer = k.clone() * 2 + 1;
+            move |i| {
+                let mut y = y[i].inner().0.clone();
+                if y > p_mid {
+                    y -= &p
+                }
+                if y.clone().abs() > p_mid.clone() - k.clone() {
+                    uncompressed += 1;
+                    z[i].clone()
+                } else {
+                    let (mut q, mut r) = y.div_rem_euc(k_2_plus_1.clone());
+                    if r > k {
+                        q += 1;
+                        r -= k_2_plus_1.clone();
+                    }
+                    let mut z = z[i].inner().0.clone();
+                    if z > p_mid {
+                        z -= &p
+                    }
+                    let test = r + z;
+                    if test > k {
+                        pos_k.clone()
+                    } else if test < -k.clone() {
+                        neg_k.clone()
+                    } else {
+                        F::zero()
+                    }
+                }
+            }
+        });
+        if Integer::from(uncompressed) * p < Integer::from(6) * k * Integer::from(KEY_SIZE) {
+            Some(z_)
+        } else {
+            None
+        }
+    }
+
+    fn checker(k: &Integer) -> impl Fn(&F) -> bool {
+        let upper = k.clone() - 32;
+        let lower = <Prime273_72 as PrimeModulo<Integer>>::divisor() - k.clone() + 32;
+        move |x: &F| {
+            let x = &x.inner().0;
+            x <= &upper || x >= &lower
+        }
+    }
+
+    fn reduce_quot(mut p: Poly, k: &Integer) -> Poly {
+        let k_2_plus_1: Integer = k.clone() * 2 + 1;
+        let q = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let q_mid = (q.clone() - 1) / 2;
+        for x in p.iter_mut() {
+            let mut x_ = x.inner().0.clone();
+            if &x_ > &q_mid {
+                x_ -= &q
+            }
+            let (q, r) = x_.div_rem_euc(k_2_plus_1.clone());
+            if &r > k {
+                *x = F::new(Int(q + 1))
+            } else {
+                *x = F::new(Int(q))
+            }
+        }
+
+        p
+    }
+
+    pub fn sign<D, R, H>(&self, rng: &mut R, init: &Init, data: D, k: Integer, h: H) -> Signature
+    where
+        D: AsRef<[u8]> + Clone,
+        R: RngCore + CryptoRng,
+        H: Fn(Vec<u8>) -> Vec<u8>,
+    {
+        let Init(a) = init;
+        let Self(s_1, s_2) = self;
+        let data = data.as_ref();
+        let lower_bound = <Prime273_72 as PrimeModulo<Integer>>::divisor() / 2 / KEY_SIZE as u64;
+        assert!(
+            k > 32 && k > lower_bound,
+            "lower_bound: 32 or {}",
+            lower_bound
+        );
+        let check = Self::checker(&k);
+        loop {
+            let y_1 = generate_poly(|_| F::new(crate::uniform_sample(rng, Int(k.clone()))));
+            let y_2 = generate_poly(|_| F::new(crate::uniform_sample(rng, Int(k.clone()))));
+            let p = Self::reduce_quot(
+                poly_add(y_2.clone(), poly_mul_mod(a.clone(), y_1.clone())),
+                &k,
+            );
+            let c = Self::hash(data, &p, &h);
+            let z_1 = poly_add(y_1, poly_mul_mod(s_1.clone(), c.clone()));
+            let z_2 = poly_add(y_2, poly_mul_mod(s_2.clone(), c.clone()));
+            if !z_1.iter().all(&check) || !z_2.iter().all(&check) {
+                continue;
+            }
+            let mut p = poly_mul_mod(self.verification_key(init).0, c.clone());
+            for x in p.iter_mut() {
+                *x = -x.clone();
+            }
+            if let Some(z_2) = Self::compress(
+                poly_add(poly_mul_mod(a.clone(), z_1.clone()), p),
+                z_2,
+                k.clone() - 32,
+            ) {
+                break Signature { z_1, z_2, c, k };
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,5 +1181,18 @@ mod tests {
         let se = serde_json::to_string(&init).unwrap();
         let init_: Init = serde_json::from_str(&se).unwrap();
         assert_eq!(init, init_);
+    }
+
+    #[quickcheck]
+    fn signing() {
+        let mut rng = StdRng::from_entropy();
+        let init = Init::new(&mut rng);
+        let sign_key = SigningKey::generate(&mut rng);
+        let verify_key = sign_key.verification_key(&init);
+        let h = |v: Vec<u8>| sha2::Sha512::digest(&v).to_vec();
+        let k = Integer::from(1) << 68;
+        let data = b"abc";
+        let signature = sign_key.sign(&mut rng, &init, data, k, &h);
+        assert!(verify_key.verify(data, signature, &init, h))
     }
 }

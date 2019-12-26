@@ -11,7 +11,7 @@ use num::traits::{One, Zero};
 use rand::RngCore;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
-use crate::{gaussian::BitPool, EuclideanDomain};
+use crate::EuclideanDomain;
 
 pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
     fn characteristic() -> M;
@@ -539,20 +539,7 @@ impl<P, V, D> Fp<P, V, D> {
         V: Zero + One + Ord + Clone + Div<Output = V> + EuclideanDomain<D>,
         D: Ord,
     {
-        let mut low = V::zero();
-        let mut high = P::divisor();
-        let one = V::one();
-        let two = one.clone() + one.clone();
-        let mut bit_pool = BitPool::new();
-        while low.clone() + one.clone() < high {
-            let mid = (low.clone() + high.clone()) / two.clone();
-            if bit_pool.take_bit(rng) {
-                low = mid;
-            } else {
-                high = mid;
-            }
-        }
-        Self::new(low)
+        Self::new(crate::uniform_sample(rng, P::divisor()))
     }
 }
 
