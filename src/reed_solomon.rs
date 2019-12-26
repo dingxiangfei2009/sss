@@ -14,6 +14,7 @@ use crate::{field::FiniteField, fourier::UnityRoot, pow, Coord, EuclideanDomain,
 
 pub type FFTOp<F> = Pin<Arc<dyn Send + Sync + Fn(Vec<F>) -> Vec<F>>>;
 
+#[derive(Clone)]
 pub struct ReedSolomon<F> {
     root: UnityRoot<F>,
     data_len: usize,
