@@ -356,7 +356,18 @@ fn construct_fft_2_12() -> ArcFFTOP {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PrivateKey(Poly);
+pub struct PrivateKey {
+    s: Poly,
+    e: Poly,
+}
+
+impl PrivateKey {
+    pub fn public_key(&self, Init(a): &Init) -> PublicKey {
+        let Self { s, e } = self;
+        let public = poly_add(poly_mul_mod(a.clone(), s.clone()), e.clone());
+        PublicKey(public)
+    }
+}
 
 fn vec_to_poly(a: Vec<F>) -> Poly {
     assert_eq!(a.len(), KEY_SIZE);
@@ -435,12 +446,13 @@ fn poly_add(mut a: Poly, b: Poly) -> Poly {
     a
 }
 
-pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R, Init(init): &Init) -> (PrivateKey, PublicKey) {
+pub fn keygen<R: CryptoRng + RngCore>(rng: &mut R, init: &Init) -> (PrivateKey, PublicKey) {
     let s = generate_poly(|_| int_inj(Int(F_DISTR_A.sample(rng).clone())));
     let e = generate_poly(|_| int_inj(Int(F_DISTR_A.sample(rng).clone() * 2)));
 
-    let public = poly_add(poly_mul_mod(init.clone(), s.clone()), e);
-    (PrivateKey(s), PublicKey(public))
+    let pri = PrivateKey { s, e };
+    let r#pub = pri.public_key(init);
+    (pri, r#pub)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -598,7 +610,10 @@ impl SessionKeyPartMix<Anke> {
         BorisPublic(boris_data, PublicKey(boris_public)): BorisPublic,
         AnkeSessionKeyPart(anke_key_part): AnkeSessionKeyPart,
         BorisSessionKeyPart(boris_key_part): BorisSessionKeyPart,
-        AnkeIdentity(PrivateKey(anke_private_key)): AnkeIdentity,
+        AnkeIdentity(PrivateKey {
+            s: anke_private_key,
+            ..
+        }): AnkeIdentity,
         AnkeSessionKeyPartR(SessionKeyPartR(anke_random)): AnkeSessionKeyPartR,
     ) -> (Self, Poly, Poly) {
         let c = hash_ident_session_key_part::<H, _, _>(
@@ -655,7 +670,10 @@ impl SessionKeyPartMix<Boris> {
         BorisPublic(boris_data, _): BorisPublic,
         AnkeSessionKeyPart(anke_key_part): AnkeSessionKeyPart,
         BorisSessionKeyPart(boris_key_part): BorisSessionKeyPart,
-        BorisIdentity(PrivateKey(boris_private_key)): BorisIdentity,
+        BorisIdentity(PrivateKey {
+            s: boris_private_key,
+            ..
+        }): BorisIdentity,
         BorisSessionKeyPartR(SessionKeyPartR(boris_random)): BorisSessionKeyPartR,
     ) -> (Self, Poly, Poly) {
         let c = hash_ident_session_key_part::<H, _, _>(
@@ -1085,8 +1103,8 @@ mod tests {
         assert_eq!(P(anke_d.clone()), P(boris_d.clone()));
         let Init(a) = init;
         let shared = poly_mul_mod(
-            poly_mul_mod(a, poly_add(poly_mul_mod(anke_c, anke_pri.0), anke_random.0)),
-            poly_add(poly_mul_mod(anke_d, boris_pri.0), boris_random.0),
+            poly_mul_mod(a, poly_add(poly_mul_mod(anke_c, anke_pri.s), anke_random.0)),
+            poly_add(poly_mul_mod(anke_d, boris_pri.s), boris_random.0),
         );
         eprintln!("shared_part={:?}", P(shared));
         let error = vec_to_poly(
