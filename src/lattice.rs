@@ -749,6 +749,13 @@ impl<'a> Deserialize<'a> for Reconciliator {
 #[derive(Clone)]
 pub struct SharedKey([bool; KEY_SIZE]);
 
+impl Deref for SharedKey {
+    type Target = [bool];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
 impl std::cmp::PartialEq for SharedKey {
     fn eq(&self, other: &Self) -> bool {
         let mut r = true;
