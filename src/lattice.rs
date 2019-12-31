@@ -535,7 +535,7 @@ impl SessionKeyPart {
         poly_to_coeff_bytes(&self.0)
     }
 
-    pub fn from_coeff_bytse(coeffs: Vec<Vec<u8>>) -> Option<Self> {
+    pub fn from_coeff_bytes(coeffs: Vec<Vec<u8>>) -> Option<Self> {
         if coeffs.len() == KEY_SIZE {
             Some(Self(vec_to_poly(
                 coeffs
@@ -1272,7 +1272,7 @@ mod tests {
     fn from_into_coeff_bytes(P(p): P) {
         let p = SessionKeyPart(p);
         let bytes = p.into_coeff_bytes();
-        let q = SessionKeyPart::from_coeff_bytse(bytes).unwrap();
+        let q = SessionKeyPart::from_coeff_bytes(bytes).unwrap();
         assert_eq!(p.0, q.0);
     }
 }
