@@ -23,7 +23,7 @@ use lazy_static::lazy_static;
 use ndarray::Array1;
 use num::{One, Zero};
 use rand::{CryptoRng, RngCore, SeedableRng};
-use rug::{Float, Integer};
+use rug::{integer::Order, Float, Integer};
 use serde::{
     de::{Deserializer, Error as DeserializeError, SeqAccess, Visitor},
     ser::{SerializeSeq, Serializer},
@@ -274,13 +274,27 @@ impl<'a> Deserialize<'a> for Poly {
     }
 }
 
+const POLY_INT_ORDER: Order = Order::LsfLe;
+
 fn poly_to_bytes(poly: &Poly) -> Vec<u8> {
     poly[..]
         .iter()
         .flat_map(|x| {
             let Int(x) = x.inner();
             let mut data = vec![0; x.significant_digits::<u8>() as usize];
-            x.write_digits(&mut data, rug::integer::Order::LsfLe);
+            x.write_digits(&mut data, POLY_INT_ORDER);
+            data
+        })
+        .collect()
+}
+
+fn poly_to_coeff_bytes(poly: &Poly) -> Vec<Vec<u8>> {
+    poly[..]
+        .iter()
+        .map(|x| {
+            let Int(x) = x.inner();
+            let mut data = vec![0; x.significant_digits::<u8>() as usize];
+            x.write_digits(&mut data, POLY_INT_ORDER);
             data
         })
         .collect()
@@ -514,6 +528,27 @@ impl SessionKeyPart {
 
     pub fn into_bytes(&self) -> Vec<u8> {
         poly_to_bytes(&self.0)
+    }
+
+    pub fn into_coeff_bytes(&self) -> Vec<Vec<u8>> {
+        poly_to_coeff_bytes(&self.0)
+    }
+
+    pub fn from_coeff_bytse(coeffs: Vec<Vec<u8>>) -> Option<Self> {
+        if coeffs.len() == KEY_SIZE {
+            Some(Self(vec_to_poly(
+                coeffs
+                    .into_iter()
+                    .map(|bytes| {
+                        let mut int = Integer::from(0);
+                        int.assign_digits(&bytes, POLY_INT_ORDER);
+                        F::new(Int(int))
+                    })
+                    .collect(),
+            )))
+        } else {
+            None
+        }
     }
 }
 
@@ -1219,5 +1254,13 @@ mod tests {
         let data = b"abc";
         let signature = sign_key.sign(&mut rng, &init, data, k, &h);
         assert!(verify_key.verify(data, signature, &init, h))
+    }
+
+    #[quickcheck]
+    fn from_into_coeff_bytes(P(p): P) {
+        let p = SessionKeyPart(p);
+        let bytes = p.into_coeff_bytes();
+        let q = SessionKeyPart::from_coeff_bytse(bytes).unwrap();
+        assert_eq!(p.0, q.0);
     }
 }
