@@ -19,6 +19,7 @@ use std::{
     sync::Arc,
 };
 
+use bitvec::prelude::*;
 use lazy_static::lazy_static;
 use ndarray::Array1;
 use num::{One, Zero};
@@ -755,9 +756,24 @@ impl SessionKeyPartMix<Boris> {
 
 pub struct Reconciliator([bool; KEY_SIZE]);
 
+impl Reconciliator {
+    pub fn into_bytes(&self) -> Vec<u8> {
+        let mut v = BitVec::<LittleEndian, u8>::new();
+        v.extend(self.0.iter().copied());
+        v.into_vec()
+    }
+    pub fn from_bytes(b: Vec<u8>) -> Self {
+        let b = BitVec::<LittleEndian, u8>::from_vec(b);
+        let mut r = [false; KEY_SIZE];
+        for i in 0..KEY_SIZE {
+            r[i] = *b.get(i).unwrap_or(&false);
+        }
+        Self(r)
+    }
+}
+
 impl Serialize for Reconciliator {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use bitvec::prelude::*;
         let mut v = BitVec::<LittleEndian, u64>::new();
         v.extend(self.0.iter().copied());
         v.serialize(s)
@@ -766,18 +782,14 @@ impl Serialize for Reconciliator {
 
 impl<'a> Deserialize<'a> for Reconciliator {
     fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
-        use bitvec::prelude::*;
-        let v = BitVec::<LittleEndian, u64>::deserialize(d)?;
-        if v.len() == KEY_SIZE {
-            let mut r: [MaybeUninit<bool>; KEY_SIZE] =
-                unsafe { MaybeUninit::uninit().assume_init() };
-            for (r, v) in r.iter_mut().zip(&v) {
-                unsafe { r.as_mut_ptr().write(*v) }
-            }
-            Ok(Self(unsafe { transmute(r) }))
-        } else {
-            Err(D::Error::custom("length mismatch"))
+        let mut v = BitVec::<LittleEndian, u64>::deserialize(d)?;
+        v.resize(KEY_SIZE, false);
+        let mut r: [MaybeUninit<bool>; KEY_SIZE] =
+            unsafe { MaybeUninit::uninit().assume_init() };
+        for (r, v) in r.iter_mut().zip(&v) {
+            unsafe { r.as_mut_ptr().write(*v) }
         }
+        Ok(Self(unsafe { transmute(r) }))
     }
 }
 
