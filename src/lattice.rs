@@ -65,6 +65,20 @@ use crate::{
 )]
 pub struct Int(Integer);
 
+impl Int {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let mut int = Integer::from(0);
+        int.assign_digits(bytes, POLY_INT_ORDER);
+        Self(int)
+    }
+    pub fn into_bytes(&self) -> Vec<u8> {
+        let Int(x) = self;
+        let mut data = vec![0; x.significant_digits::<u8>() as usize];
+        x.write_digits(&mut data, POLY_INT_ORDER);
+        data
+    }
+}
+
 impl Hash for Int {
     fn hash<H: Hasher>(&self, h: &mut H) {
         self.0.hash(h)
@@ -280,25 +294,12 @@ const POLY_INT_ORDER: Order = Order::LsfLe;
 fn poly_to_bytes(poly: &Poly) -> Vec<u8> {
     poly[..]
         .iter()
-        .flat_map(|x| {
-            let Int(x) = x.inner();
-            let mut data = vec![0; x.significant_digits::<u8>() as usize];
-            x.write_digits(&mut data, POLY_INT_ORDER);
-            data
-        })
+        .flat_map(|x| x.inner().into_bytes())
         .collect()
 }
 
 fn poly_to_coeff_bytes(poly: &Poly) -> Vec<Vec<u8>> {
-    poly[..]
-        .iter()
-        .map(|x| {
-            let Int(x) = x.inner();
-            let mut data = vec![0; x.significant_digits::<u8>() as usize];
-            x.write_digits(&mut data, POLY_INT_ORDER);
-            data
-        })
-        .collect()
+    poly[..].iter().map(|x| x.inner().into_bytes()).collect()
 }
 
 fn generate_poly(mut f: impl FnMut(usize) -> F) -> Poly {
@@ -540,11 +541,7 @@ impl SessionKeyPart {
             Some(Self(vec_to_poly(
                 coeffs
                     .into_iter()
-                    .map(|bytes| {
-                        let mut int = Integer::from(0);
-                        int.assign_digits(&bytes, POLY_INT_ORDER);
-                        F::new(Int(int))
-                    })
+                    .map(|bytes| F::new(Int::from_bytes(&bytes)))
                     .collect(),
             )))
         } else {
@@ -784,8 +781,7 @@ impl<'a> Deserialize<'a> for Reconciliator {
     fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
         let mut v = BitVec::<LittleEndian, u64>::deserialize(d)?;
         v.resize(KEY_SIZE, false);
-        let mut r: [MaybeUninit<bool>; KEY_SIZE] =
-            unsafe { MaybeUninit::uninit().assume_init() };
+        let mut r: [MaybeUninit<bool>; KEY_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
         for (r, v) in r.iter_mut().zip(&v) {
             unsafe { r.as_mut_ptr().write(*v) }
         }
@@ -901,15 +897,17 @@ impl VerificationKey {
     where
         H: Fn(Vec<u8>) -> Vec<u8>,
     {
-        let check = SigningKey::checker(&k);
+        let check = SigningKey::checker(&k.0);
         let mut result = z_1.iter().all(&check);
         result &= z_2.iter().all(&check);
         let mut p = poly_mul_mod(self.0.clone(), c.clone());
         for p in p.iter_mut() {
             *p = -p.clone()
         }
-        let p =
-            SigningKey::reduce_quot(poly_add(poly_mul_mod(a.clone(), z_1), poly_add(z_2, p)), &k);
+        let p = SigningKey::reduce_quot(
+            poly_add(poly_mul_mod(a.clone(), z_1), poly_add(z_2, p)),
+            &k.0,
+        );
         let c_expect = SigningKey::hash(data.as_ref(), &p, h);
         result &= c == c_expect;
         result
@@ -918,10 +916,10 @@ impl VerificationKey {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Signature {
-    z_1: Poly,
-    z_2: Poly,
-    c: Poly,
-    k: Integer,
+    pub z_1: Poly,
+    pub z_2: Poly,
+    pub c: Poly,
+    pub k: Int,
 }
 
 impl SigningKey {
@@ -1092,7 +1090,12 @@ impl SigningKey {
                 z_2,
                 k.clone() - 32,
             ) {
-                break Signature { z_1, z_2, c, k };
+                break Signature {
+                    z_1,
+                    z_2,
+                    c,
+                    k: Int(k),
+                };
             }
         }
     }
