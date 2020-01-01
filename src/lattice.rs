@@ -205,6 +205,25 @@ lazy_static! {
 #[derive(Clone)]
 pub struct Poly([F; KEY_SIZE]);
 
+impl Poly {
+    pub fn into_coeff_bytes(&self) -> Vec<Vec<u8>> {
+        poly_to_coeff_bytes(&self)
+    }
+
+    pub fn from_coeff_bytes(coeffs: Vec<Vec<u8>>) -> Option<Self> {
+        if coeffs.len() == KEY_SIZE {
+            Some(vec_to_poly(
+                coeffs
+                    .into_iter()
+                    .map(|bytes| F::new(Int::from_bytes(&bytes)))
+                    .collect(),
+            ))
+        } else {
+            None
+        }
+    }
+}
+
 impl Hash for Poly {
     fn hash<H: Hasher>(&self, h: &mut H) {
         for x in self.0.iter() {
