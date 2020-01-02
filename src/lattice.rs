@@ -330,7 +330,7 @@ fn generate_poly(mut f: impl FnMut(usize) -> F) -> Poly {
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
-pub struct Init(Poly);
+pub struct Init(pub Poly);
 
 impl Init {
     pub fn new<R: CryptoRng + RngCore>(rng: &mut R) -> Self {
