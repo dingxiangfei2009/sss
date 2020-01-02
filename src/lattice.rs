@@ -942,6 +942,28 @@ pub struct Signature {
 }
 
 impl SigningKey {
+    pub fn from_private_key(PrivateKey { s, e }: &PrivateKey) -> Self {
+        let p = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let p_mid: Integer = (p.clone() - 1) / 2;
+        let s_1 = generate_poly(|i| {
+            let Int(x) = s[i].inner();
+            if *x < p_mid {
+                F::zero()
+            } else {
+                F::one()
+            }
+        });
+        let s_2 = generate_poly(|i| {
+            let Int(x) = e[i].inner();
+            if *x < p_mid {
+                F::zero()
+            } else {
+                F::one()
+            }
+        });
+        Self(s_1, s_2)
+    }
+
     pub fn generate<R: CryptoRng + RngCore>(rng: &mut R) -> Self {
         let mut bit_pool = crate::gaussian::BitPool::new();
         let s_1 = generate_poly(|_| {
