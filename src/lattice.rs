@@ -392,8 +392,8 @@ fn construct_fft_2_12() -> ArcFFTOP {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct PrivateKey {
-    s: Poly,
-    e: Poly,
+    pub s: Poly,
+    pub e: Poly,
 }
 
 impl PrivateKey {
@@ -900,7 +900,7 @@ impl<P> SessionKeyPartMix<P> {
 pub const SIGN_K: u128 = 1u128 << 68;
 
 #[derive(Serialize, Deserialize, Clone, Debug, Hash)]
-pub struct SigningKey(Poly, Poly);
+pub struct SigningKey(pub Poly, pub Poly);
 
 #[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct VerificationKey(pub Poly);
