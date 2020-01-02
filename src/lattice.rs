@@ -457,7 +457,7 @@ lazy_static! {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct PublicKey(Poly);
+pub struct PublicKey(pub Poly);
 
 fn poly_mul_mod(a: Poly, b: Poly) -> Poly {
     let a = FFT_2_12((Array1::from(a.to_vec()) * PHI.clone()).to_vec());
@@ -903,7 +903,7 @@ pub const SIGN_K: u128 = 1u128 << 68;
 pub struct SigningKey(Poly, Poly);
 
 #[derive(Serialize, Deserialize, Clone, Debug, Hash, PartialEq, Eq)]
-pub struct VerificationKey(Poly);
+pub struct VerificationKey(pub Poly);
 
 impl VerificationKey {
     pub fn verify<D: AsRef<[u8]>, H>(
