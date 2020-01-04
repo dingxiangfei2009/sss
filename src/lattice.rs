@@ -47,7 +47,6 @@ use crate::{
     Div,
     DivAssign,
     Eq,
-    From,
     Mul,
     MulAssign,
     Neg,
@@ -85,8 +84,11 @@ impl Hash for Int {
     }
 }
 
-impl From<u16> for Int {
-    fn from(x: u16) -> Self {
+impl<T> From<T> for Int
+where
+    Integer: From<T>,
+{
+    fn from(x: T) -> Self {
         Self(x.into())
     }
 }
@@ -1093,12 +1095,14 @@ impl SigningKey {
         p
     }
 
-    pub fn sign<D, R, H>(&self, rng: &mut R, init: &Init, data: D, k: Integer, h: H) -> Signature
+    pub fn sign<R, H, D, K>(&self, rng: &mut R, init: &Init, data: D, k: K, h: H) -> Signature
     where
         D: AsRef<[u8]> + Clone,
         R: RngCore + CryptoRng,
         H: Fn(Vec<u8>) -> Vec<u8>,
+        K: Into<Integer>,
     {
+        let k = k.into();
         let Init(a) = init;
         let Self(s_1, s_2) = self;
         let data = data.as_ref();
