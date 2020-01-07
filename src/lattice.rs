@@ -205,7 +205,7 @@ lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct Poly([F; KEY_SIZE]);
+pub struct Poly(Box<[F; KEY_SIZE]>);
 
 impl Poly {
     pub fn into_coeff_bytes(&self) -> Vec<Vec<u8>> {
@@ -328,7 +328,7 @@ fn generate_poly(mut f: impl FnMut(usize) -> F) -> Poly {
     for (i, x) in init[..].iter_mut().enumerate() {
         unsafe { x.as_mut_ptr().write(f(i)) }
     }
-    unsafe { transmute(init) }
+    Poly(Box::new(unsafe { transmute(init) }))
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Deserialize)]
@@ -882,7 +882,7 @@ impl<P> SessionKeyPartMix<P> {
         for (w, r) in self.0.iter().map(|k| cha(k)).zip(r[..].iter_mut()) {
             unsafe { r.as_mut_ptr().write(w) }
         }
-        unsafe { transmute(r) }
+        Reconciliator(unsafe { transmute(r) })
     }
 
     pub fn reconciliate(&self, Reconciliator(r): &Reconciliator) -> SharedKey {
