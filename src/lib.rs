@@ -10,7 +10,7 @@ extern crate derive_more;
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     iter::repeat,
-    ops::{Add, BitAnd, Div, Mul, ShrAssign, Sub},
+    ops::{Add, BitAnd, Div, Mul, MulAssign, Neg, Shr, Sub},
 };
 
 use alga::general::{Additive, Field, Identity};
@@ -19,12 +19,16 @@ use num::{
     BigUint, ToPrimitive,
 };
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
+pub mod adapter;
 pub mod conv;
 pub mod facts;
 pub mod field;
 pub mod fourier;
+pub mod galois;
 pub mod gaussian;
+pub mod goppa;
 pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
@@ -123,7 +127,7 @@ impl_euclidean_domain_int! {
 }
 
 /// Univariate polynomial ring over a field `T`
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Polynomial<T>(pub Vec<T>);
 
 impl<T: Display> Display for Polynomial<T> {
@@ -163,7 +167,10 @@ impl<T: Clone + Zero> Add for Polynomial<T> {
     }
 }
 
-impl<T: Clone + Zero + Sub<Output = T>> Sub for Polynomial<T> {
+impl<T> Sub for Polynomial<T>
+where
+    T: Clone + Zero + Sub<Output = T>,
+{
     type Output = Self;
     fn sub(self, other: Self) -> Self {
         let (Polynomial(left), Polynomial(right)) = (self, other);
@@ -190,10 +197,19 @@ where
 
 impl<T> One for Polynomial<T>
 where
-    T: Zero + One + Clone,
+    T: One + Zero + Clone,
 {
     fn one() -> Self {
         Polynomial(vec![T::one()])
+    }
+}
+
+impl<T> Default for Polynomial<T>
+where
+    T: Zero + Clone,
+{
+    fn default() -> Self {
+        Self::zero()
     }
 }
 
@@ -329,6 +345,52 @@ where
             }
         }
         Polynomial::new(r)
+    }
+}
+
+impl<T> Mul<T> for Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Clone,
+{
+    type Output = Self;
+    fn mul(mut self, a: T) -> Self::Output {
+        for x in &mut self.0 {
+            *x = x.clone() * a.clone();
+        }
+        Polynomial::new(self.0)
+    }
+}
+
+impl<T> MulAssign for Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Clone,
+{
+    fn mul_assign(&mut self, rhs: Self) {
+        let lhs = self.clone();
+        *self = lhs * rhs;
+    }
+}
+
+impl<T> Div<T> for Polynomial<T>
+where
+    T: Div<Output = T> + Zero + Clone,
+{
+    type Output = Self;
+    fn div(mut self, a: T) -> Self::Output {
+        for x in &mut self.0 {
+            *x = x.clone() / a.clone();
+        }
+        Polynomial::new(self.0)
+    }
+}
+
+impl<T> Neg for Polynomial<T>
+where
+    T: Neg<Output = T>,
+{
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self(self.0.into_iter().map(|x| -x).collect())
     }
 }
 
@@ -470,7 +532,7 @@ where
     p.reverse();
     let p = Polynomial::new(p);
     let gcd = g.clone().gcd(p);
-    !gcd.is_zero() && gcd.0.len() == 1
+    !gcd.is_zero() && gcd.degree() == 0
 }
 
 pub fn search_normal_basis<F, G>(deg_ext: usize) -> F
@@ -502,20 +564,18 @@ where
 // even when it is the case
 pub fn pow<F, E>(mut x: F, mut exp: E) -> F
 where
-    E: BitAnd,
-    E: for<'a> BitAnd<&'a E, Output = E>,
-    E: ShrAssign<usize> + From<u8> + Zero + Clone,
-    F: Field + Clone,
+    E: BitAnd<Output = E> + Shr<usize, Output = E> + From<u8> + Zero + Clone,
+    F: Mul<Output = F> + One + Clone,
 {
     let mut p = x;
     x = F::one();
     let bit = E::from(1);
     while !exp.is_zero() {
-        if !(exp.clone() & &bit).is_zero() {
-            x *= p.clone();
+        if !(exp.clone() & bit.clone()).is_zero() {
+            x = x * p.clone();
         }
-        p *= p.clone();
-        exp >>= 1;
+        p = p.clone() * p;
+        exp = exp >> 1;
     }
     x
 }

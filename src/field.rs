@@ -2,7 +2,10 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign},
+    ops::{
+        Add, AddAssign, BitAnd, BitOr, Div, DivAssign, Mul, MulAssign, Neg, Rem, Shl, Shr, Sub,
+        SubAssign,
+    },
 };
 
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
@@ -11,7 +14,45 @@ use num::traits::{One, Zero};
 use rand::RngCore;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
-use crate::EuclideanDomain;
+use crate::{pow, EuclideanDomain};
+
+pub trait ConstructibleNumber:
+    Clone
+    + Zero
+    + One
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Rem<Output = Self>
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + From<u128>
+    + Shl<u32, Output = Self>
+    + Shr<u32, Output = Self>
+    + BitAnd<Output = Self>
+    + BitOr<Output = Self>
+    + Ord
+    + Eq
+{
+}
+
+impl<T> ConstructibleNumber for T where
+    T: Clone
+        + Zero
+        + One
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Rem<Output = T>
+        + Add<Output = T>
+        + Sub<Output = T>
+        + From<u128>
+        + Shl<u32, Output = T>
+        + Shr<u32, Output = T>
+        + BitAnd<Output = T>
+        + BitOr<Output = T>
+        + Ord
+        + Eq
+{
+}
 
 pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
     fn characteristic() -> M;
@@ -24,6 +65,11 @@ pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
 
     fn to_vec(&self) -> Vec<Self::Scalar>;
     fn from_scalar(scalar: Self::Scalar) -> Self;
+
+    /// Apply Frobenius Endomorphism from the base field
+    fn frobenius_base(self) -> Self;
+    /// Auxillary Frobenius map for arbitrary type
+    fn field_size<T: ConstructibleNumber>() -> T;
 }
 
 pub trait FinitelyGenerated<G> {
@@ -104,6 +150,15 @@ impl FiniteField for GF2561D {
     fn from_scalar(F2(x): F2) -> Self {
         GF2561D(x & 1)
     }
+
+    fn frobenius_base(self) -> Self {
+        pow(self, 2)
+    }
+
+    fn field_size<T: ConstructibleNumber>() -> T {
+        let sz = T::from(2);
+        pow(sz, 8)
+    }
 }
 
 impl FiniteField for F2 {
@@ -121,6 +176,14 @@ impl FiniteField for F2 {
 
     fn from_scalar(s: Self) -> Self {
         s
+    }
+
+    fn frobenius_base(self) -> Self {
+        self
+    }
+
+    fn field_size<T: ConstructibleNumber>() -> T {
+        T::from(2)
     }
 }
 

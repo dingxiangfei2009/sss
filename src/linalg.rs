@@ -49,6 +49,74 @@ where
         .to_owned()
 }
 
+/// Generic Gaussian Elimination
+pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<T> {
+    let (n, m) = a.dim();
+    assert!(n > 0);
+    let mut pivots = vec![];
+    let mut pivot = 0;
+    for i in 0..n {
+        if a[[i, pivot]].is_zero() {
+            let mut new_pivot = None;
+            for j in pivot..m {
+                let mut a = a.slice_mut(s![i.., ..]);
+                let mut it = a.axis_iter_mut(Axis(0));
+                let this_row = it.next().expect("row must exists");
+                if let Some(that_row) = it.find(|row| !row[j].is_zero()) {
+                    Zip::from(this_row).and(that_row).par_apply(std::mem::swap);
+                    new_pivot = Some(j);
+                    break;
+                }
+            }
+            match new_pivot {
+                Some(new_pivot) => pivot = new_pivot,
+                None => break,
+            }
+        }
+        pivots.push(pivot);
+        let (mut this_equation, mut rest_equations) = a.slice_mut(s![i.., ..]).split_at(Axis(0), 1);
+        let mut this_equation = this_equation.index_axis_mut(Axis(0), 0);
+        let scale = this_equation[pivot].clone();
+        assert!(!scale.is_zero());
+        this_equation.iter_mut().for_each(|a| {
+            *a /= scale.clone();
+        });
+
+        rest_equations
+            .axis_iter_mut(Axis(0))
+            .into_par_iter()
+            .for_each(|mut eqn| {
+                let scale = eqn[pivot].clone();
+                if !scale.is_zero() {
+                    eqn.iter_mut()
+                        .zip(this_equation.iter())
+                        .for_each(|(e, e_)| *e -= e_.clone() * scale.clone());
+                }
+            });
+        pivot += 1;
+        if pivot >= m {
+            break;
+        }
+    }
+
+    // a is in row echelon form now
+    if pivots.len() > 1 {
+        for (i, &pivot) in pivots[1..].iter().enumerate() {
+            let (mut rest_equations, this_equation) =
+                a.slice_mut(s![..=i, ..]).split_at(Axis(0), i);
+            let this_equation = this_equation.index_axis(Axis(0), 0);
+            rest_equations.axis_iter_mut(Axis(0)).for_each(|eqn| {
+                let scale = eqn[pivot].clone();
+                Zip::from(eqn)
+                    .and(this_equation)
+                    .par_apply(|e, e_| *e -= e_.clone() * scale.clone());
+            });
+        }
+    }
+
+    a
+}
+
 /// solve a system of linear equation with Gaussian Elimination
 pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
     let (equations, unknowns) = a.dim();
