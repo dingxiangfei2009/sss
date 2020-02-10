@@ -45,19 +45,19 @@ where
     V: ConstructibleNumber,
 {
     fn divisor() -> V {
-        let mut v = V::from(273);
+        let mut v = int_inj(273);
         v = v << 72;
-        v = v + V::from(1);
+        v = v + V::one();
         v
     }
 }
 
-impl FiniteField<Int, usize> for F {
-    fn characteristic() -> Int {
+impl FiniteField for F {
+    fn characteristic<T: ConstructibleNumber>() -> T {
         Prime273_72::divisor()
     }
-    fn degree_extension() -> usize {
-        1
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        T::one()
     }
     type Scalar = Self;
     fn to_vec(&self) -> Vec<Self::Scalar> {
@@ -1197,7 +1197,7 @@ mod tests {
         assert_eq!(init, init_);
     }
 
-    #[quickcheck]
+    #[test]
     fn signing() {
         let mut rng = StdRng::from_entropy();
         let init = Init::new(&mut rng);

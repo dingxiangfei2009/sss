@@ -385,8 +385,8 @@ fn gf2561d_normal_basis() {
 #[test]
 fn gf2561d_gamma_is_normal_basis() {
     let gamma = GF2561D_NORMAL_BASIS;
-    let mut g = vec![GF2561D::zero(); GF2561D::degree_extension() + 1];
-    g[GF2561D::degree_extension()] = GF2561D::one() / GF2561D(0b00010011);
+    let mut g = vec![GF2561D::zero(); GF2561D::degree_extension::<Int>().assert_usize() + 1];
+    g[GF2561D::degree_extension::<Int>().assert_usize()] = GF2561D::one() / GF2561D(0b00010011);
     g[0] -= GF2561D::one() / GF2561D(0b00010011);
     let g = Polynomial::new(g);
 
@@ -394,7 +394,7 @@ fn gf2561d_gamma_is_normal_basis() {
     let mut p = vec![];
     for _ in 0..GF2561D::degree_extension() {
         p.push(beta.clone());
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     p.reverse();
     let p = Polynomial::new(p);
@@ -459,7 +459,7 @@ fn gf2561d_normal_basis_conversion(gamma: GF2561D, deg_ext: usize) {
         let mut basis = vec![];
         for _ in 0..deg_ext {
             basis.push(gamma);
-            gamma = pow(gamma, GF2561D::characteristic());
+            gamma = pow(gamma, GF2561D::characteristic::<Int>().assert_usize());
         }
         basis
     };
@@ -492,7 +492,7 @@ fn gf2561d_normal_basis_conversion(gamma: GF2561D, deg_ext: usize) {
 fn gf2561d_gamma_normal_basis_has_conversion() {
     gf2561d_normal_basis_conversion(
         crate::field::GF2561D_NORMAL_BASIS,
-        GF2561D::degree_extension(),
+        GF2561D::degree_extension::<Int>().assert_usize(),
     );
 }
 
@@ -574,7 +574,7 @@ fn gf2561d_subfield_16_normal_basis() {
     let mut beta = gamma;
     for _ in 0..subfield_deg_ext {
         print!("{} ", beta);
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     println!();
     assert_eq!(beta, gamma);
@@ -589,7 +589,7 @@ fn gf2561d_subfield_4_normal_basis() {
     let mut beta = gamma;
     for _ in 0..subfield_deg_ext {
         print!("{} ", beta);
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     println!();
     assert_eq!(beta, gamma);

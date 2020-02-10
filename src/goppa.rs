@@ -4,6 +4,7 @@ use num::{One, Zero};
 use rand::{CryptoRng, RngCore};
 
 use crate::{
+    adapter::Int,
     field::{ArbitraryElement, FiniteField},
     Coord, Polynomial,
 };
@@ -26,8 +27,9 @@ impl<F: Clone + FiniteField + ArbitraryElement> Goppa<F> {
         let t = correction_level;
         let zero = F::zero();
         assert!(t >= 2);
-        assert!(F::degree_extension() * t < n);
-        let k = n - F::degree_extension() * t;
+        let t_ = F::degree_extension::<Int>().assert_usize() * t;
+        assert!(t_ < n);
+        let k = n - t_;
         loop {
             let g = Polynomial(
                 (0..t)

@@ -16,17 +16,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     adapter::Int,
-    field::{ConstructibleNumber, FiniteField, GF2561D},
+    field::{int_inj, ConstructibleNumber, FiniteField, GF2561D},
     linalg::solve,
     pow, Coord, EuclideanDomain, Polynomial,
 };
 
-pub fn compute_normal_basis_multiplication_table<F>(base_generator: F) -> Vec<Vec<F::Scalar>>
+pub fn compute_normal_basis_multiplication_table<F>(
+    base_generator: F,
+) -> (Vec<F::Scalar>, Vec<Vec<F::Scalar>>)
 where
     F: Clone + FiniteField,
     F::Scalar: Send + Sync,
 {
-    let m = F::degree_extension();
+    let m = F::degree_extension::<Int>().assert_usize();
     // compute normal basis elements
     let mut betas = vec![];
     let beta = base_generator.clone();
@@ -36,7 +38,7 @@ where
         beta_ = beta_.frobenius_base();
     }
 
-    // suffice to compute beta^(1+q^i) where q=|F|, i < floor(m / 2)
+    // suffice to compute beta^(1+q^i) where q=|F|, i <= floor(m / 2)
     let mut table = vec![];
     beta_ = beta.clone();
     for _ in 0..=m / 2 {
@@ -55,13 +57,32 @@ where
         );
         beta_ = beta_.frobenius_base();
     }
-    table
+    let mat: Vec<_> = betas
+        .iter()
+        .flatten()
+        .cloned()
+        .chain(vec![F::Scalar::one()])
+        .chain(vec![F::Scalar::zero(); m - 1])
+        .collect();
+    let one = solve(
+        Array2::from_shape_vec((m + 1, m), mat)
+            .expect("shape should be correct")
+            .t()
+            .to_owned(),
+    )
+    .expect("basis are linearly independent")
+    .to_vec();
+    (one, table)
 }
 
 /*
 0 1 2 3 4 5 6 7
 1 0 0 0 0 1 0 0
 1 0 0 1 0 0 0 0
+
+0 1 2 3 4 5 6
+1 0 0 0 0 1 0
+1 0 1 0 0 0 0
 */
 
 pub trait MonicPolynomial<F>
@@ -110,11 +131,11 @@ pub struct PolynomialExtension<F, P> {
     _p: PhantomData<fn() -> P>,
 }
 
-impl<F, P> Eq for PolynomialExtension<F, P> where F: FiniteField {}
+impl<F, P> Eq for PolynomialExtension<F, P> where F: Eq {}
 
 impl<F, P> PartialEq for PolynomialExtension<F, P>
 where
-    F: FiniteField,
+    F: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
@@ -469,15 +490,15 @@ where
     P: MonicPolynomial<F>,
 {
     type Scalar = F;
-    fn characteristic() -> usize {
+    fn characteristic<T: ConstructibleNumber>() -> T {
         F::characteristic()
     }
-    fn degree_extension() -> usize {
-        P::degree()
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        int_inj(P::degree())
     }
     fn to_vec(&self) -> Vec<F> {
         let mut data = self.data.clone().0;
-        data.resize(Self::degree_extension(), F::zero());
+        data.resize(Self::degree_extension::<Int>().assert_usize(), F::zero());
         data
     }
     fn from_scalar(scalar: Self::Scalar) -> Self {
@@ -500,7 +521,7 @@ where
         r
     }
     fn field_size<T: ConstructibleNumber>() -> T {
-        crate::pow(Self::Scalar::field_size(), Self::degree_extension())
+        crate::pow(Self::Scalar::field_size(), Self::degree_extension::<Int>())
     }
 }
 
@@ -556,12 +577,12 @@ where
     p
 }
 
-pub fn test_normal_basis<F, M, N>(alpha: F) -> bool
+pub fn test_normal_basis<F>(alpha: F) -> bool
 where
-    F: FiniteField<M, N> + Clone,
-    N: Into<usize>,
+    F: FiniteField + Clone,
 {
-    let deg_ext = F::degree_extension().into();
+    let deg_ext: Int = F::degree_extension();
+    let deg_ext = deg_ext.assert_usize();
     let q: Int = F::Scalar::field_size();
     let g = Polynomial::new(normal_basis_test_polynomial(deg_ext));
     let mut beta = alpha.clone();
@@ -577,28 +598,482 @@ where
     !gcd.is_zero() && gcd.degree() == 0
 }
 
+/// Galois field extension over a subfield, through a normal basis
+#[derive(Debug, Serialize, Deserialize)]
 pub struct NormalBasisExtension<F, B> {
     data: Vec<F>,
     _p: PhantomData<fn() -> B>,
 }
 
+impl<F, B> Clone for NormalBasisExtension<F, B>
+where
+    F: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            data: self.data.clone(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<F, B> NormalBasisExtension<F, B> {
+    fn new(data: Vec<F>) -> Self
+    where
+        B: NormalBasis<F>,
+    {
+        assert_eq!(data.len(), B::degree_extension());
+        Self {
+            data,
+            _p: PhantomData,
+        }
+    }
+    fn shift_right(mut self, n: usize) -> Self
+    where
+        B: NormalBasis<F>,
+    {
+        let n = n % B::degree_extension();
+        self.data.rotate_right(n);
+        self
+    }
+}
+
+pub trait NormalBasis<F> {
+    fn degree_extension() -> usize;
+    fn multiplier(a: usize) -> Vec<F>;
+    fn unit() -> F;
+
+    fn mul(a: usize) -> Vec<F> {
+        let m = Self::degree_extension();
+        assert!(a < m);
+        if a > m / 2 {
+            let b = m - a;
+            let mut p = Self::multiplier(b);
+            assert_eq!(p.len(), m);
+            p.rotate_left(b);
+            p
+        } else {
+            Self::multiplier(a)
+        }
+    }
+}
+
+impl<F, B> PartialEq for NormalBasisExtension<F, B>
+where
+    F: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+
+impl<F, B> Eq for NormalBasisExtension<F, B> where F: Eq {}
+
+impl<F, B> Add for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+{
+    type Output = Self;
+    fn add(self, other: Self) -> Self {
+        Self {
+            data: self
+                .data
+                .into_iter()
+                .zip(other.data)
+                .map(|(a, b)| a + b)
+                .collect(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<F, B> Sub for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+{
+    type Output = Self;
+    fn sub(self, other: Self) -> Self {
+        Self {
+            data: self
+                .data
+                .into_iter()
+                .zip(other.data)
+                .map(|(a, b)| a - b)
+                .collect(),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<F, B> Zero for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+    fn zero() -> Self {
+        Self {
+            data: vec![F::zero(); B::degree_extension()],
+            _p: PhantomData,
+        }
+    }
+    fn is_zero(&self) -> bool {
+        self.data.iter().all(|x| x.is_zero())
+    }
+}
+
+impl<F, B> TwoSidedInverse<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    fn two_sided_inverse(&self) -> Self {
+        Self::new(self.data.iter().map(|x| -x.clone()).collect())
+    }
+}
+
+impl<F, B> Mul<F> for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    type Output = Self;
+    fn mul(self, other: F) -> Self {
+        Self::new(self.data.into_iter().map(|x| x * other.clone()).collect())
+    }
+}
+
+impl<F, B> Mul for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    type Output = Self;
+    fn mul(self, other: Self) -> Self {
+        let mut x = Self::zero();
+        for (i, a) in self.data.iter().enumerate() {
+            for (j, b) in other.data.iter().enumerate() {
+                let (p, q) = if i < j { (i, j) } else { (j, i) };
+                let mut m = B::mul(q - p);
+                m.rotate_right(p);
+                x = x + Self::new(m) * (a.clone() * b.clone());
+            }
+        }
+        x
+    }
+}
+
+impl<F, B> TwoSidedInverse<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    fn two_sided_inverse(&self) -> Self {
+        let mut m = B::degree_extension();
+        assert!(m > 1);
+        let mut n = 0;
+        let mut t = 1;
+        let a = self.clone();
+        let mut b = a.clone().shift_right(1);
+        let mut c = b.clone();
+        while m > 0 {
+            if m & 1 > 0 {
+                c = c * b.clone().shift_right(n);
+                n += t;
+            }
+            b = b.clone() * b.shift_right(t);
+            m >>= 1;
+            t <<= 1;
+        }
+        assert_eq!(n, B::degree_extension());
+        let c_ = c.clone() * a;
+        let c_elem = c_.data[0].clone();
+        assert!(
+            c_.data.iter().all(|x| x == &c_elem),
+            "not a subfield element"
+        );
+        let c_ = Self::new(vec![B::unit() / c_elem; B::degree_extension()]);
+        c * c_
+    }
+}
+
+impl<F, B> Div for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    type Output = Self;
+    fn div(self, other: Self) -> Self {
+        self * <_ as TwoSidedInverse<Multiplicative>>::two_sided_inverse(&other)
+    }
+}
+
+impl<F, B> AddAssign for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+{
+    fn add_assign(&mut self, other: Self) {
+        for (a, b) in self.data.iter_mut().zip(other.data) {
+            *a += b;
+        }
+    }
+}
+
+impl<F, B> SubAssign for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+{
+    fn sub_assign(&mut self, other: Self) {
+        for (a, b) in self.data.iter_mut().zip(other.data) {
+            *a -= b;
+        }
+    }
+}
+
+impl<F, B> MulAssign for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    fn mul_assign(&mut self, other: Self) {
+        *self = self.clone() * other;
+    }
+}
+
+impl<F, B> DivAssign for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    fn div_assign(&mut self, other: Self) {
+        *self = self.clone() / other;
+    }
+}
+
+impl<F, B> Neg for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+{
+    type Output = Self;
+    fn neg(mut self) -> Self {
+        let data = take(&mut self.data).into_iter().map(|x| -x).collect();
+        self.data = data;
+        self
+    }
+}
+
+impl<F, B> One for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    fn one() -> Self {
+        Self::new(vec![B::unit(); B::degree_extension()])
+    }
+}
+
+impl<F, B> AbstractMagma<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+    #[inline]
+    fn operate(&self, right: &Self) -> Self {
+        self.clone() + right.clone()
+    }
+}
+
+impl<F, B> AbstractMagma<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+    #[inline]
+    fn operate(&self, right: &Self) -> Self {
+        self.clone() * right.clone()
+    }
+}
+
+impl<F, B> Identity<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+    fn identity() -> Self {
+        Self::new(vec![F::zero(); B::degree_extension()])
+    }
+}
+
+impl<F, B> Identity<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+    fn identity() -> Self {
+        Self::new(vec![B::unit(); B::degree_extension()])
+    }
+}
+
+impl<F, B> AbstractField for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractRingCommutative for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractRing for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractGroupAbelian<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractGroup<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractLoop<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractQuasigroup<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractMonoid<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractSemigroup<Multiplicative> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractGroupAbelian<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractGroup<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractLoop<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractQuasigroup<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractMonoid<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> AbstractSemigroup<Additive> for NormalBasisExtension<F, B>
+where
+    F: FiniteField,
+    B: NormalBasis<F>,
+{
+}
+
+impl<F, B> FiniteField for NormalBasisExtension<F, B>
+where
+    F: FiniteField + Clone,
+    B: NormalBasis<F>,
+{
+    type Scalar = F;
+    fn characteristic<T: ConstructibleNumber>() -> T {
+        F::characteristic()
+    }
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        int_inj(B::degree_extension())
+    }
+    fn to_vec(&self) -> Vec<F> {
+        self.data.clone()
+    }
+    fn from_scalar(scalar: Self::Scalar) -> Self {
+        Self {
+            data: vec![B::unit() * scalar; B::degree_extension()],
+            _p: PhantomData,
+        }
+    }
+    fn frobenius_base(self) -> Self {
+        self.shift_right(1)
+    }
+    fn field_size<T: ConstructibleNumber>() -> T {
+        crate::pow(Self::Scalar::field_size(), B::degree_extension())
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Debug)]
+pub struct GF2561D_N2;
+
+impl NormalBasis<GF2561D> for GF2561D_N2 {
+    fn unit() -> GF2561D {
+        GF2561D(1)
+    }
+    fn degree_extension() -> usize {
+        2
+    }
+    fn multiplier(a: usize) -> Vec<GF2561D> {
+        lazy_static::lazy_static! {
+            static ref TABLE: Vec<Vec<GF2561D>> = vec![
+                vec![GF2561D(248), GF2561D(249)],
+                vec![GF2561D(249), GF2561D(249)],
+            ];
+        }
+        TABLE[a].clone()
+    }
+}
+
+pub type GF65536N = NormalBasisExtension<GF2561D, GF2561D_N2>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use quickcheck::{Arbitrary, Gen};
-
-    impl<F, P> Arbitrary for PolynomialExtension<F, P>
-    where
-        F: Arbitrary + FiniteField,
-        P: MonicPolynomial<F> + 'static,
-    {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            Self {
-                data: Polynomial::new((0..P::degree()).map(|_| F::arbitrary(g))),
-                _p: PhantomData,
-            }
-        }
-    }
 
     #[test]
     #[ignore]
@@ -616,6 +1091,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn as_form_forbidden_const() {
         let mut h = std::collections::BTreeSet::new();
         for i in 0..=255u8 {
@@ -637,15 +1113,38 @@ mod tests {
                 alpha
             );
         }
-        for (i, x) in compute_normal_basis_multiplication_table(beta)
-            .into_iter()
-            .enumerate()
-        {
+        let (one, table) = compute_normal_basis_multiplication_table(beta);
+        println!("one=");
+        for x in one {
+            print!(" {:?}", x);
+        }
+        println!("");
+        for (i, x) in table.into_iter().enumerate() {
             print!("{}:", i);
             for y in x {
                 print!(" {:?}", y)
             }
             println!("")
+        }
+    }
+}
+
+#[cfg(test)]
+mod gf65536p_tests {
+    use super::*;
+
+    use quickcheck::{Arbitrary, Gen};
+
+    impl<F, P> Arbitrary for PolynomialExtension<F, P>
+    where
+        F: Arbitrary + FiniteField,
+        P: MonicPolynomial<F> + 'static,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            Self {
+                data: Polynomial::new((0..P::degree()).map(|_| F::arbitrary(g))),
+                _p: PhantomData,
+            }
         }
     }
 
@@ -664,5 +1163,48 @@ mod tests {
         args.0.is_zero()
             || args.1.is_zero()
             || <GF65536P as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+    }
+}
+
+#[cfg(test)]
+mod gf65536n_tests {
+    use super::*;
+
+    use quickcheck::{Arbitrary, Gen};
+
+    impl<F, B> Arbitrary for NormalBasisExtension<F, B>
+    where
+        F: Arbitrary + FiniteField,
+        B: NormalBasis<F> + 'static,
+    {
+        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+            Self::new(
+                (0..B::degree_extension())
+                    .map(|_| F::arbitrary(g))
+                    .collect(),
+            )
+        }
+    }
+
+    #[quickcheck]
+    fn prop_mul_and_add_are_distributive(args: (GF65536N, GF65536N, GF65536N)) -> bool {
+        GF65536N::prop_mul_and_add_are_distributive(args)
+    }
+
+    #[quickcheck]
+    fn prop_mul_is_commutative(args: (GF65536N, GF65536N)) -> bool {
+        <GF65536N as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
+    }
+
+    #[quickcheck]
+    fn prop_mul_inv_is_latin_square(args: (GF65536N, GF65536N)) -> bool {
+        args.0.is_zero()
+            || args.1.is_zero()
+            || <GF65536N as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+    }
+
+    #[quickcheck]
+    fn prop_proper_field((a, b): (GF65536N, GF65536N)) -> bool {
+        a.is_zero() || b.is_zero() || !(a * b).is_zero()
     }
 }

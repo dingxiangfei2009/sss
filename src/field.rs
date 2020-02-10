@@ -14,7 +14,7 @@ use num::traits::{One, Zero};
 use rand::RngCore;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
-use crate::{pow, EuclideanDomain};
+use crate::{adapter::Int, pow, EuclideanDomain};
 
 pub trait ConstructibleNumber:
     Clone
@@ -25,11 +25,11 @@ pub trait ConstructibleNumber:
     + Rem<Output = Self>
     + Add<Output = Self>
     + Sub<Output = Self>
-    + From<u128>
     + Shl<u32, Output = Self>
     + Shr<u32, Output = Self>
     + BitAnd<Output = Self>
     + BitOr<Output = Self>
+    + Neg<Output = Self>
     + Ord
     + Eq
 {
@@ -44,24 +44,24 @@ impl<T> ConstructibleNumber for T where
         + Rem<Output = T>
         + Add<Output = T>
         + Sub<Output = T>
-        + From<u128>
         + Shl<u32, Output = T>
         + Shr<u32, Output = T>
         + BitAnd<Output = T>
         + BitOr<Output = T>
+        + Neg<Output = T>
         + Ord
         + Eq
 {
 }
 
-pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
-    fn characteristic() -> M;
-    fn degree_extension() -> N;
+pub trait FiniteField: alga::general::Field {
+    fn characteristic<T: ConstructibleNumber>() -> T;
+    fn degree_extension<T: ConstructibleNumber>() -> T;
 
     // TODO: requires the base to have the same characteristics and degree of extension to be 1
     /// Scalar type, with respect to some finite set of
     /// generators of this finite field
-    type Scalar: FiniteField<M, N>;
+    type Scalar: FiniteField;
 
     fn to_vec(&self) -> Vec<Self::Scalar>;
     fn from_scalar(scalar: Self::Scalar) -> Self;
@@ -128,16 +128,18 @@ pub struct GF2561D(pub u8);
 pub struct GF2561DG2;
 
 impl FiniteField for GF2561D {
-    fn characteristic() -> usize {
-        2
+    fn characteristic<T: ConstructibleNumber>() -> T {
+        int_inj(2)
     }
-    fn degree_extension() -> usize {
-        8
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        int_inj(8)
     }
     type Scalar = F2;
 
     fn to_vec(&self) -> Vec<Self::Scalar> {
-        let mut v = Vec::with_capacity(Self::degree_extension());
+        let deg_ext: Int = Self::degree_extension();
+        let deg_ext = deg_ext.assert_usize();
+        let mut v = Vec::with_capacity(deg_ext);
         let GF2561D(mut x) = *self;
         for _ in 0..Self::degree_extension() {
             v.push(F2(x & 1));
@@ -156,17 +158,17 @@ impl FiniteField for GF2561D {
     }
 
     fn field_size<T: ConstructibleNumber>() -> T {
-        let sz = T::from(2);
+        let sz: T = int_inj(2);
         pow(sz, 8)
     }
 }
 
 impl FiniteField for F2 {
-    fn characteristic() -> usize {
-        2
+    fn characteristic<T: ConstructibleNumber>() -> T {
+        int_inj(2)
     }
-    fn degree_extension() -> usize {
-        1
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        T::one()
     }
     type Scalar = Self;
 
@@ -183,7 +185,7 @@ impl FiniteField for F2 {
     }
 
     fn field_size<T: ConstructibleNumber>() -> T {
-        T::from(2)
+        int_inj(2)
     }
 }
 

@@ -15,8 +15,8 @@ use std::{
 
 use alga::general::{Additive, Field, Identity};
 use num::{
-    traits::{One, Pow, Zero},
-    BigUint, ToPrimitive,
+    traits::{One, Zero},
+    BigUint,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -34,6 +34,8 @@ pub mod lfsr;
 pub mod linalg;
 pub mod merkle;
 pub mod reed_solomon;
+
+use crate::{adapter::Int, field::int_inj};
 
 pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
 
@@ -498,21 +500,23 @@ where
         if alpha.is_zero() {
             continue;
         }
-        if test_normal_basis(alpha.clone(), F::degree_extension()) {
+        if test_normal_basis(alpha.clone(), F::degree_extension::<Int>().assert_usize()) {
             return alpha;
         }
     }
 }
 
 fn assert_subfield<F: FiniteField>(deg_ext: usize) {
+    let f_deg_ext: Int = F::degree_extension();
+    let char: Int = F::characteristic();
     assert_eq!(
-        F::degree_extension() % deg_ext,
-        0,
+        f_deg_ext.clone() % Int::from(deg_ext),
+        Int::zero(),
         "finite field GF({}^{}) is not a subfield of GF({}^{})",
-        F::characteristic(),
+        char,
         deg_ext,
-        F::characteristic(),
-        F::degree_extension()
+        char,
+        f_deg_ext,
     );
 }
 
@@ -524,9 +528,10 @@ where
     let g: Polynomial<F> = Polynomial::new(normal_basis_test_polynomial(deg_ext));
     let mut beta = alpha.clone();
     let mut p = vec![];
+    let q: Int = F::characteristic();
     for _ in 0..deg_ext {
         p.push(beta.clone());
-        beta = pow(beta, F::characteristic());
+        beta = pow(beta, q.clone());
     }
     assert!(alpha == beta, "field element is not in the subfield");
     p.reverse();
@@ -543,12 +548,15 @@ where
 
     // the following division will produce zero remainder after the last
     // assertion
-    let exp: BigUint = (BigUint::from(F::characteristic()).pow(F::degree_extension()) - 1u8)
-        / (BigUint::from(F::characteristic()).pow(deg_ext) - 1u8);
+    let q: Int = F::characteristic();
+    let f_deg_ext: Int = F::degree_extension();
+    let a = int_inj::<BigUint, Int>(pow(q.clone(), f_deg_ext) - Int::one());
+    let b = int_inj::<BigUint, Int>(pow(q.clone(), deg_ext) - Int::one());
+    let exp = a / b;
 
     let gamma = pow(<F as FinitelyGenerated<G>>::generator(), exp);
     let mut alpha = gamma.clone();
-    let mut c = BigUint::from(F::characteristic()).pow(deg_ext) - 1u8;
+    let mut c = int_inj::<BigUint, Int>(pow(q, deg_ext) - Int::one());
     while !c.is_zero() {
         if test_normal_basis(alpha.clone(), deg_ext) {
             return alpha;
@@ -581,15 +589,17 @@ where
 }
 
 pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
-    let mut q = BigUint::from(1u8);
+    let mut q = Int::one();
     let mut p_pows = vec![];
+    let char: Int = F::characteristic();
     for _ in 0..F::degree_extension() {
         p_pows.push(q.clone());
-        q *= F::characteristic();
+        q *= char.clone();
+        let n: Int = int_inj(n);
         q %= n;
     }
-    q += n - 1;
-    q %= n;
+    q += int_inj(n - 1);
+    q %= int_inj::<Int, _>(n);
     assert!(q.is_zero(), "{} is not zero", q);
 
     // TODO: maybe use ufds here?
@@ -601,11 +611,11 @@ pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
         }
         let mut coset = vec![];
         for p in &p_pows {
-            let j = (p.clone() * i) % n;
+            let j = (p.clone() * int_inj::<Int, _>(i)) % int_inj::<Int, _>(n);
             if !s.insert(j.clone()) {
                 break;
             }
-            coset.push(j.to_usize().expect("size should fit"));
+            coset.push(j.assert_usize());
         }
         cosets.push(coset);
     }

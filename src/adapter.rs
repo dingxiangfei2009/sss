@@ -1,7 +1,7 @@
 use std::{
     fmt::Debug,
     hash::{Hash, Hasher},
-    ops::{Div, DivAssign, Mul, Rem, Shr},
+    ops::{Div, DivAssign, Mul, MulAssign, Rem, RemAssign, Shr},
 };
 
 use num::{One, Zero};
@@ -31,6 +31,7 @@ use crate::EuclideanDomain;
     Sub,
     SubAssign,
     Rem,
+    RemAssign,
     Serialize,
     Deserialize,
     Display,
@@ -50,6 +51,10 @@ impl Int {
         let mut data = vec![0; x.significant_digits::<u8>() as usize];
         x.write_digits(&mut data, POLY_INT_ORDER);
         data
+    }
+
+    pub fn assert_usize(self) -> usize {
+        self.0.to_usize().expect("out of usize range")
     }
 }
 
@@ -85,6 +90,12 @@ impl Mul<Int> for Integer {
     }
 }
 
+impl MulAssign<Int> for Int {
+    fn mul_assign(&mut self, other: Int) {
+        self.0 *= other.0;
+    }
+}
+
 impl Div<Int> for Integer {
     type Output = Integer;
     fn div(self, other: Int) -> Self::Output {
@@ -102,6 +113,12 @@ impl Rem<Int> for Integer {
     type Output = Integer;
     fn rem(self, other: Int) -> Self::Output {
         self % other.0
+    }
+}
+
+impl RemAssign<Int> for Int {
+    fn rem_assign(&mut self, other: Int) {
+        self.0 %= other.0;
     }
 }
 
