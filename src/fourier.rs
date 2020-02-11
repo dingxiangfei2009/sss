@@ -102,7 +102,7 @@ where
 /// Fourier Transform by definition
 pub fn naive<F>(root: UnityRoot<F>) -> impl Fn(Vec<F>) -> Vec<F>
 where
-    F: Field + Clone + Send + Sync,
+    F: Field + Clone + Sync,
 {
     move |x: Vec<F>| {
         let n = x.len();

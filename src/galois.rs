@@ -1,5 +1,6 @@
 /// More Galois Field constructions and arithmetics
 use std::{
+    iter::repeat_with,
     marker::PhantomData,
     mem::take,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
@@ -12,11 +13,12 @@ use alga::general::{
 };
 use ndarray::Array2;
 use num::{One, Zero};
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     adapter::Int,
-    field::{int_inj, ConstructibleNumber, FiniteField, GF2561D},
+    field::{int_inj, ArbitraryElement, ConstructibleNumber, FiniteField, F2, GF2561D},
     linalg::solve,
     pow, Coord, EuclideanDomain, Polynomial,
 };
@@ -113,15 +115,14 @@ where
             c
         }
     }
-    fn inv(a: Polynomial<F>) -> Polynomial<F> {
+    fn inv(a: Polynomial<F>) -> Option<Polynomial<F>> {
         let (a, _, g): (Polynomial<F>, Polynomial<F>, Polynomial<F>) =
             Self::reduce(a).extended_gcd(Self::repr());
-        assert!(!g.is_zero(), "division by zero polynomial");
-        assert!(g.degree() == 0, "deg g={} is not zero", g.degree());
-        Self::reduce(a / g.0[0].clone())
-    }
-    fn gcd(a: Polynomial<F>) -> (Polynomial<F>, Polynomial<F>, Polynomial<F>) {
-        Self::reduce(a).extended_gcd(Self::repr())
+        if !g.is_zero() && g.degree() == 0 {
+            Some(Self::reduce(a / g.0[0].clone()))
+        } else {
+            None
+        }
     }
 }
 
@@ -333,7 +334,7 @@ where
 {
     fn two_sided_inverse(&self) -> Self {
         Self {
-            data: P::inv(self.data.clone()),
+            data: P::inv(self.data.clone()).expect("monic polynomial should be irreducible"),
             _p: PhantomData,
         }
     }
@@ -523,6 +524,16 @@ where
     fn field_size<T: ConstructibleNumber>() -> T {
         crate::pow(Self::Scalar::field_size(), Self::degree_extension::<Int>())
     }
+
+    fn try_lower(self) -> Option<Self::Scalar> {
+        if self.data.degree() > 0 {
+            None
+        } else {
+            let Polynomial(mut data) = self.data;
+            let mut it = data.drain(..);
+            Some(it.next().expect("polynomial should not be empty"))
+        }
+    }
 }
 
 impl<F, P> PolynomialExtension<F, P>
@@ -535,6 +546,24 @@ where
             data: P::reduce(Polynomial(vec![F::zero(), F::one()])),
             _p: PhantomData,
         }
+    }
+    pub fn from_poly(poly: Polynomial<F>) -> Self {
+        Self {
+            data: P::reduce(poly),
+            _p: PhantomData,
+        }
+    }
+}
+
+impl<F, P> ArbitraryElement for PolynomialExtension<F, P>
+where
+    F: FiniteField + ArbitraryElement,
+    P: MonicPolynomial<F>,
+{
+    fn arbitrary<R: RngCore>(rng: &mut R) -> Self {
+        Self::from_poly(Polynomial::new(
+            repeat_with(|| F::arbitrary(rng)).take(P::degree()),
+        ))
     }
 }
 
@@ -618,10 +647,11 @@ where
 }
 
 impl<F, B> NormalBasisExtension<F, B> {
-    fn new(data: Vec<F>) -> Self
+    fn new(data: impl IntoIterator<Item = F>) -> Self
     where
         B: NormalBasis<F>,
     {
+        let data: Vec<_> = data.into_iter().collect();
         assert_eq!(data.len(), B::degree_extension());
         Self {
             data,
@@ -727,7 +757,7 @@ where
     B: NormalBasis<F>,
 {
     fn two_sided_inverse(&self) -> Self {
-        Self::new(self.data.iter().map(|x| -x.clone()).collect())
+        Self::new(self.data.iter().map(|x| -x.clone()))
     }
 }
 
@@ -738,7 +768,7 @@ where
 {
     type Output = Self;
     fn mul(self, other: F) -> Self {
-        Self::new(self.data.into_iter().map(|x| x * other.clone()).collect())
+        Self::new(self.data.into_iter().map(|x| x * other.clone()))
     }
 }
 
@@ -785,13 +815,8 @@ where
             t <<= 1;
         }
         assert_eq!(n, B::degree_extension());
-        let c_ = c.clone() * a;
-        let c_elem = c_.data[0].clone();
-        assert!(
-            c_.data.iter().all(|x| x == &c_elem),
-            "not a subfield element"
-        );
-        let c_ = Self::new(vec![B::unit() / c_elem; B::degree_extension()]);
+        let c_ = (c.clone() * a).try_lower().expect("should be a subfield element");
+        let c_ = Self::new(vec![B::unit() / c_; B::degree_extension()]);
         c * c_
     }
 }
@@ -1045,6 +1070,24 @@ where
     fn field_size<T: ConstructibleNumber>() -> T {
         crate::pow(Self::Scalar::field_size(), B::degree_extension())
     }
+    fn try_lower(mut self) -> Option<Self::Scalar> {
+        for x in &self.data {
+            if x != &self.data[0] {
+                return None
+            }
+        }
+        Some(self.data.pop().expect("vec should not be empty"))
+    }
+}
+
+impl<F, B> ArbitraryElement for NormalBasisExtension<F, B>
+where
+    F: FiniteField + ArbitraryElement,
+    B: NormalBasis<F>,
+{
+    fn arbitrary<R: RngCore>(rng: &mut R) -> Self {
+        Self::new(repeat_with(|| F::arbitrary(rng)).take(B::degree_extension()))
+    }
 }
 
 #[allow(non_camel_case_types)]
@@ -1166,6 +1209,68 @@ mod gf65536p_tests {
     }
 }
 
+pub trait ExtensionTower {
+    type Super: FiniteField;
+    type Bottom: FiniteField;
+    fn to_vec(f: Self::Super) -> Vec<Self::Bottom>;
+    fn degree_extension<T: ConstructibleNumber>() -> T;
+    fn try_into_bottom(x: Self::Super) -> Option<Self::Bottom>;
+    fn into_super(x: Self::Bottom) -> Self::Super;
+}
+
+pub struct FiniteExtensionTower<A, B> {
+    _p: PhantomData<fn() -> (A, B)>,
+}
+
+pub struct BottomField;
+
+impl<A> ExtensionTower for FiniteExtensionTower<A, BottomField>
+where
+    A: FiniteField<Scalar = A>,
+{
+    type Super = A;
+    type Bottom = A;
+    fn to_vec(f: Self::Super) -> Vec<Self::Bottom> {
+        vec![f]
+    }
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        T::one()
+    }
+    fn try_into_bottom(x: A) -> Option<A> {
+        Some(x)
+    }
+    fn into_super(x: A) -> A {
+        x
+    }
+}
+
+impl<A, B> ExtensionTower for FiniteExtensionTower<A, B>
+where
+    A: FiniteField<Scalar = B::Super>,
+    B: ExtensionTower,
+{
+    type Super = A;
+    type Bottom = B::Bottom;
+    fn to_vec(f: Self::Super) -> Vec<Self::Bottom> {
+        f.to_vec().into_iter().flat_map(|x| B::to_vec(x)).collect()
+    }
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        B::degree_extension::<T>() * A::degree_extension()
+    }
+    fn try_into_bottom(x: Self::Super) -> Option<Self::Bottom> {
+        let x = x.try_lower()?;
+        B::try_into_bottom(x)
+    }
+    fn into_super(x: Self::Bottom) -> Self::Super {
+        Self::Super::from_scalar(B::into_super(x))
+    }
+}
+
+pub type GF65536NTower = FiniteExtensionTower<
+    GF65536N,
+    FiniteExtensionTower<GF2561D, FiniteExtensionTower<F2, BottomField>>,
+>;
+
 #[cfg(test)]
 mod gf65536n_tests {
     use super::*;
@@ -1178,11 +1283,7 @@ mod gf65536n_tests {
         B: NormalBasis<F> + 'static,
     {
         fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            Self::new(
-                (0..B::degree_extension())
-                    .map(|_| F::arbitrary(g))
-                    .collect(),
-            )
+            Self::new((0..B::degree_extension()).map(|_| F::arbitrary(g)))
         }
     }
 
@@ -1206,5 +1307,12 @@ mod gf65536n_tests {
     #[quickcheck]
     fn prop_proper_field((a, b): (GF65536N, GF65536N)) -> bool {
         a.is_zero() || b.is_zero() || !(a * b).is_zero()
+    }
+
+    #[test]
+    fn prop_ext_tower()
+    where
+        GF65536NTower: ExtensionTower,
+    {
     }
 }

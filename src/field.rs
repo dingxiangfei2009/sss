@@ -70,6 +70,8 @@ pub trait FiniteField: alga::general::Field {
     fn frobenius_base(self) -> Self;
     /// Auxillary Frobenius map for arbitrary type
     fn field_size<T: ConstructibleNumber>() -> T;
+    /// Try to lower the element into the subfield
+    fn try_lower(self) -> Option<Self::Scalar>;
 }
 
 pub trait FinitelyGenerated<G> {
@@ -161,6 +163,14 @@ impl FiniteField for GF2561D {
         let sz: T = int_inj(2);
         pow(sz, 8)
     }
+
+    fn try_lower(self) -> Option<Self::Scalar> {
+        if self.0 == 0 || self.0 == 1 {
+            Some(F2(self.0))
+        } else {
+            None
+        }
+    }
 }
 
 impl FiniteField for F2 {
@@ -186,6 +196,10 @@ impl FiniteField for F2 {
 
     fn field_size<T: ConstructibleNumber>() -> T {
         int_inj(2)
+    }
+
+    fn try_lower(self) -> Option<Self> {
+        Some(self)
     }
 }
 

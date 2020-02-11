@@ -72,6 +72,9 @@ impl FiniteField for F {
     fn field_size<T: ConstructibleNumber>() -> T {
         Prime273_72::divisor()
     }
+    fn try_lower(self) -> Option<Self::Scalar> {
+        Some(self)
+    }
 }
 
 lazy_static! {

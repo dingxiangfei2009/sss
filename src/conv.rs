@@ -1,25 +1,16 @@
 use std::{
-    mem::MaybeUninit,
     ops::{Add, Deref, Mul, Neg, Sub},
     sync::Arc,
 };
 
 use alga::general::Field;
-use ndarray::{
-    Array, Array1, Array2, ArrayView, ArrayView2, Axis, ErrorKind, RemoveAxis, ShapeError, Zip,
-};
+use ndarray::{Array1, Array2, ArrayView2, Axis, Zip};
 use num::{One, Zero};
 
 use crate::{
     linalg::{mat_mat_mul, mat_vec_mul},
     EuclideanDomain,
 };
-
-macro_rules! stack {
-    ($axis:expr, $( $array:expr ),+ ) => {
-        $crate::conv::stack($axis, &[ $(::ndarray::ArrayView::from(&$array) ),* ]).unwrap()
-    }
-}
 
 pub fn toeplitz_d(n: usize) -> Array2<i8> {
     assert!(n > 1 && n & 1 > 0);
@@ -63,59 +54,6 @@ pub fn toeplitz_e(n: usize) -> (usize, Array2<i8>) {
         assert_eq!((n, m), e.dim());
         (m, e)
     }
-}
-
-fn stack<'a, A, D>(axis: Axis, arrays: &[ArrayView<'a, A, D>]) -> Result<Array<A, D>, ShapeError>
-where
-    A: Clone,
-    D: RemoveAxis,
-{
-    if arrays.is_empty() {
-        return Err(ShapeError::from_kind(ErrorKind::Unsupported));
-    }
-    let mut res_dim = arrays[0].raw_dim();
-    if axis.index() >= res_dim.ndim() {
-        return Err(ShapeError::from_kind(ErrorKind::OutOfBounds));
-    }
-    let common_dim = res_dim.remove_axis(axis);
-    if arrays
-        .iter()
-        .any(|a| a.raw_dim().remove_axis(axis) != common_dim)
-    {
-        return Err(ShapeError::from_kind(ErrorKind::IncompatibleShape));
-    }
-
-    let stacked_dim = arrays.iter().map(|a| a.len_of(axis)).sum();
-    let Axis(ref axis_idx) = axis;
-    res_dim.as_array_view_mut()[*axis_idx] = stacked_dim;
-
-    // we can safely use uninitialized values here because they are Copy
-    // and we will only ever write to them
-    let size = res_dim.size();
-    let mut v = Vec::with_capacity(size);
-    v.resize_with(size, MaybeUninit::uninit);
-    let mut res: Array<MaybeUninit<A>, _> = Array::from_shape_vec(res_dim.clone(), v)?;
-
-    {
-        let mut assign_view = res.view_mut();
-        let arrays = arrays.iter().map(|a| a.mapv(MaybeUninit::new));
-        for mut array in arrays {
-            let len = array.len_of(axis);
-            let (mut front, rest) = assign_view.split_at(axis, len);
-            Zip::from(&mut front).and(&mut array).apply(|dst, src|
-                       // this is safe, because `MaybeUninit` does not manage `Drop`
-                       unsafe { src.as_ptr().copy_to(dst.as_mut_ptr(), 1) });
-            assign_view = rest;
-        }
-    }
-    let res = Array::from_shape_vec(
-        res_dim,
-        res.into_raw_vec()
-            .into_iter()
-            .map(|x| unsafe { x.assume_init() as A })
-            .collect(),
-    )?;
-    Ok(res)
 }
 
 #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper

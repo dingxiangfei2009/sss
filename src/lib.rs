@@ -21,8 +21,12 @@ use num::{
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
-pub mod adapter;
+#[macro_use]
+pub mod array;
+
 pub mod conv;
+
+pub mod adapter;
 pub mod facts;
 pub mod field;
 pub mod fourier;
