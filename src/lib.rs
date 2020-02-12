@@ -24,9 +24,8 @@ use serde::{Deserialize, Serialize};
 #[macro_use]
 pub mod array;
 
-pub mod conv;
-
 pub mod adapter;
+pub mod conv;
 pub mod facts;
 pub mod field;
 pub mod fourier;
@@ -37,6 +36,7 @@ pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
 pub mod merkle;
+pub mod poly;
 pub mod reed_solomon;
 
 use crate::{adapter::Int, field::int_inj};

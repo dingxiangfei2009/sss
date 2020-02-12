@@ -310,8 +310,6 @@ mod tests {
 
     #[test]
     fn encode_decode_small() {
-        // let n = 6960;
-        // let t = 94;
         let n = 80;
         let t = 5;
         let u = rand::distributions::uniform::Uniform::from(0..n);
