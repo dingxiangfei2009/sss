@@ -37,7 +37,7 @@ fn key_exchange() {
         seed
     };
     eprintln!("generate anke key part");
-    let (anke_part_mix, anke_c, anke_d) =
+    let (anke_part_mix, _anke_c, _anke_d) =
         SessionKeyPartMix::<Anke>::generate::<rand_chacha::ChaChaRng, _, _>(
             seeder,
             &session_key_mix_sampler_anke,
@@ -49,7 +49,7 @@ fn key_exchange() {
             AnkeSessionKeyPartR(&anke_random),
         );
     eprintln!("generate boris key part");
-    let (boris_part_mix, boris_c, boris_d) =
+    let (boris_part_mix, _boris_c, _boris_d) =
         SessionKeyPartMix::<Boris>::generate::<rand_chacha::ChaChaRng, _, _>(
             seeder,
             &session_key_mix_sampler_boris,

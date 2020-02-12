@@ -1,5 +1,7 @@
 /// More Galois Field constructions and arithmetics
 use std::{
+    any::type_name,
+    fmt::{Debug, Display, Formatter, Result as FmtResult},
     iter::repeat_with,
     marker::PhantomData,
     mem::take,
@@ -126,10 +128,30 @@ where
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct PolynomialExtension<F, P> {
     data: Polynomial<F>,
     _p: PhantomData<fn() -> P>,
+}
+
+impl<F, P> Debug for PolynomialExtension<F, P>
+where
+    F: Debug,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct(type_name::<Self>())
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl<F, P> Display for PolynomialExtension<F, P>
+where
+    F: Display,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}({})", type_name::<Self>(), self.data)
+    }
 }
 
 impl<F, P> Eq for PolynomialExtension<F, P> where F: Eq {}
@@ -333,6 +355,7 @@ where
     P: MonicPolynomial<F>,
 {
     fn two_sided_inverse(&self) -> Self {
+        assert!(!self.data.is_zero(), "division by zero");
         Self {
             data: P::inv(self.data.clone()).expect("monic polynomial should be irreducible"),
             _p: PhantomData,
@@ -582,7 +605,6 @@ pub fn artin_candidate<F: FiniteField + Clone, P: MonicPolynomial<F>>(
 }
 
 #[allow(non_camel_case_types)]
-#[derive(Debug)]
 pub struct GF2561D_P2;
 
 impl MonicPolynomial<GF2561D> for GF2561D_P2 {
@@ -628,10 +650,34 @@ where
 }
 
 /// Galois field extension over a subfield, through a normal basis
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct NormalBasisExtension<F, B> {
     data: Vec<F>,
     _p: PhantomData<fn() -> B>,
+}
+
+impl<F, B> Debug for NormalBasisExtension<F, B>
+where
+    F: Debug,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct(type_name::<Self>())
+            .field("data", &self.data)
+            .finish()
+    }
+}
+
+impl<F, B> Display for NormalBasisExtension<F, B>
+where
+    F: Display,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{}[", type_name::<Self>())?;
+        for x in &self.data {
+            write!(f, " {}", x)?;
+        }
+        write!(f, "]")
+    }
 }
 
 impl<F, B> Clone for NormalBasisExtension<F, B>
@@ -815,7 +861,9 @@ where
             t <<= 1;
         }
         assert_eq!(n, B::degree_extension());
-        let c_ = (c.clone() * a).try_lower().expect("should be a subfield element");
+        let c_ = (c.clone() * a)
+            .try_lower()
+            .expect("should be a subfield element");
         let c_ = Self::new(vec![B::unit() / c_; B::degree_extension()]);
         c * c_
     }
@@ -1073,7 +1121,7 @@ where
     fn try_lower(mut self) -> Option<Self::Scalar> {
         for x in &self.data {
             if x != &self.data[0] {
-                return None
+                return None;
             }
         }
         Some(self.data.pop().expect("vec should not be empty"))
@@ -1298,14 +1346,16 @@ mod gf65536n_tests {
     }
 
     #[quickcheck]
-    fn prop_mul_inv_is_latin_square(args: (GF65536N, GF65536N)) -> bool {
-        args.0.is_zero()
-            || args.1.is_zero()
-            || <GF65536N as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+    fn prop_mul_inv_is_latin_square((a, b): (GF65536N, GF65536N)) -> bool {
+        println!("testing {:?} {:?}", a, b);
+        a.is_zero()
+            || b.is_zero()
+            || <GF65536N as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square((a, b))
     }
 
     #[quickcheck]
     fn prop_proper_field((a, b): (GF65536N, GF65536N)) -> bool {
+        println!("testing {:?} {:?}", a, b);
         a.is_zero() || b.is_zero() || !(a * b).is_zero()
     }
 

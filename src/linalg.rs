@@ -73,7 +73,7 @@ pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<
                 None => break,
             }
         }
-        pivots.push(pivot);
+        pivots.push((i, pivot));
         let (mut this_equation, mut rest_equations) = a.slice_mut(s![i.., ..]).split_at(Axis(0), 1);
         let mut this_equation = this_equation.index_axis_mut(Axis(0), 0);
         let scale = this_equation[pivot].clone();
@@ -101,12 +101,15 @@ pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<
 
     // a is in row echelon form now
     if pivots.len() > 1 {
-        for (i, &pivot) in pivots[1..].iter().enumerate() {
+        for (i, pivot) in pivots[1..].iter().rev() {
             let (mut rest_equations, this_equation) =
-                a.slice_mut(s![..=i, ..]).split_at(Axis(0), i);
+                a.slice_mut(s![..=*i, ..]).split_at(Axis(0), *i);
             let this_equation = this_equation.index_axis(Axis(0), 0);
             rest_equations.axis_iter_mut(Axis(0)).for_each(|eqn| {
-                let scale = eqn[pivot].clone();
+                if eqn[*pivot].is_zero() {
+                    return;
+                }
+                let scale = eqn[*pivot].clone();
                 Zip::from(eqn)
                     .and(this_equation)
                     .par_apply(|e, e_| *e -= e_.clone() * scale.clone());
