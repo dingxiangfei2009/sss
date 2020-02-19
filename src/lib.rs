@@ -156,8 +156,12 @@ pub struct Coord<T>(pub T, pub T);
 
 impl<T: Zero> Polynomial<T> {
     pub fn new(coeffs: impl IntoIterator<Item = T>) -> Self {
-        let mut coeffs = coeffs.into_iter().collect();
-        truncate_high_degree_zeros(&mut coeffs);
+        let mut coeffs: Vec<_> = coeffs.into_iter().collect();
+        if coeffs.is_empty() {
+            coeffs.push(T::zero());
+        } else {
+            truncate_high_degree_zeros(&mut coeffs);
+        }
         Self(coeffs)
     }
 }

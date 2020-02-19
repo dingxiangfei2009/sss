@@ -37,6 +37,15 @@ use num::{rational::BigRational, BigInt, One};
 use quickcheck::{Arbitrary, Gen};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
+impl<T> Arbitrary for Polynomial<T>
+where
+    T: Zero + Arbitrary,
+{
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        Polynomial::new(<Vec<T> as Arbitrary>::arbitrary(g))
+    }
+}
+
 #[derive(Copy, Clone, Debug, Display, Alga, PartialEq, Eq)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct F7(u8);

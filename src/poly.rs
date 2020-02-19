@@ -61,3 +61,32 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::field::GF2561D;
+
+    #[quickcheck]
+    fn multipoint_eval(p: Polynomial<GF2561D>, mut t: Vec<u8>) {
+        t.sort();
+        t.dedup();
+        if t.is_empty() || p.is_zero() {
+            return;
+        }
+        let t: Vec<_> = t.into_iter().map(GF2561D).collect();
+        let et = MultiPointEvalTable::build(&t);
+        println!("p={:?}", p);
+        println!("t={:?}", t);
+        assert_eq!(
+            et.eval(p.clone()),
+            t.into_iter()
+                .map(|x| {
+                    let Coord(_, y) = p.eval_at(x);
+                    y
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+}
