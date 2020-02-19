@@ -10,7 +10,7 @@ extern crate derive_more;
 use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     iter::repeat,
-    ops::{Add, BitAnd, Div, Mul, MulAssign, Neg, Shr, Sub},
+    ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
 use alga::general::{Additive, Field, Identity};
@@ -241,28 +241,60 @@ where
     T: Field + Clone,
 {
     #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
-    pub fn div(mut self, mut divisor: Self) -> (Self, Self) {
+    pub fn div(mut self, mut b: Self) -> (Self, Self) {
         truncate_high_degree_zeros(&mut self.0);
-        truncate_high_degree_zeros(&mut divisor.0);
-        assert!(!divisor.is_zero());
+        truncate_high_degree_zeros(&mut b.0);
+        assert!(!b.is_zero());
 
-        let (Polynomial(mut a), Polynomial(d)) = (self, divisor);
-        if a.len() < d.len() {
-            return (Polynomial(vec![T::zero()]), Polynomial(a));
+        let n = self.degree();
+        let m = b.degree();
+        if n < m {
+            return (Self::zero(), self);
         }
-        let mut quot = Vec::with_capacity(a.len() - d.len() + 1);
-        let d_deg = d.len() - 1;
-        assert!(a.len() >= d.len());
-        for i in (0..a.len() - d_deg).rev() {
-            // this is safe because the divisor `d` is not zero
-            let q = a[i + d_deg].clone() / d[d_deg].clone();
-            for j in 0..=d_deg {
-                a[i + j] -= d[j].clone() * q.clone();
-            }
-            quot.push(q);
+        let mut divisor = b.clone();
+        divisor.0.reverse();
+        truncate_high_degree_zeros(&mut divisor.0);
+        let lead_coeff = divisor.0[0].clone();
+        divisor /= lead_coeff.clone();
+
+        divisor = divisor.inv_mod_x_2pow(n - m + 1);
+        let Polynomial(mut dividend) = self.clone();
+        dividend.reverse();
+        let Polynomial(mut quotient) = divisor * Polynomial::new(dividend);
+        quotient.resize(n - m + 1, T::zero());
+        quotient.reverse();
+        let mut quotient = Polynomial::new(quotient);
+        quotient /= lead_coeff;
+        let remainder = self - quotient.clone() * b;
+        (quotient, remainder)
+    }
+
+    fn truncate_upto_deg(&self, deg: usize) -> Self {
+        if self.degree() >= deg {
+            Polynomial::new(self.0[..deg].to_vec())
+        } else {
+            self.clone()
         }
-        quot.reverse();
-        (Polynomial(quot), Polynomial::new(a))
+    }
+
+    fn inv_mod_x_2pow(self, target: usize) -> Self {
+        let mut t = target.next_power_of_two();
+        t >>= 1;
+        let mut j = 2;
+        let mut g = Self::one();
+        let two = T::one() + T::one();
+        while t > 0 {
+            let g_ = g.clone() * g.clone();
+            let g_ = g_.truncate_upto_deg(j);
+            let g_ = g_ * self.truncate_upto_deg(j);
+            let g_ = g_.truncate_upto_deg(j);
+            let g_ = g * two.clone() - g_;
+            let g_ = g_.truncate_upto_deg(j);
+            g = g_;
+            t >>= 1;
+            j <<= 1;
+        }
+        g
     }
 
     pub fn formal_derivative(mut self) -> Self {
@@ -381,6 +413,18 @@ where
     }
 }
 
+impl<T> MulAssign<T> for Polynomial<T>
+where
+    T: MulAssign + Zero + Clone,
+{
+    fn mul_assign(&mut self, rhs: T) {
+        for x in self.0.iter_mut() {
+            *x *= rhs.clone();
+        }
+        truncate_high_degree_zeros(&mut self.0);
+    }
+}
+
 impl<T> Div<T> for Polynomial<T>
 where
     T: Div<Output = T> + Zero + Clone,
@@ -391,6 +435,17 @@ where
             *x = x.clone() / a.clone();
         }
         Polynomial::new(self.0)
+    }
+}
+
+impl<T> DivAssign<T> for Polynomial<T>
+where
+    T: DivAssign + Zero + Clone,
+{
+    fn div_assign(&mut self, rhs: T) {
+        for x in self.0.iter_mut() {
+            *x /= rhs.clone()
+        }
     }
 }
 

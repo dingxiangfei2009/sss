@@ -34,8 +34,38 @@ use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedI
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
 use num::{rational::BigRational, BigInt, One};
-use quickcheck::{Arbitrary, Gen};
+use quickcheck::{Arbitrary, Gen, TestResult};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+fn naive_poly_div_with_rem<T>(
+    mut a: Polynomial<T>,
+    mut b: Polynomial<T>,
+) -> (Polynomial<T>, Polynomial<T>)
+where
+    T: Field + Clone,
+{
+    truncate_high_degree_zeros(&mut a.0);
+    truncate_high_degree_zeros(&mut b.0);
+    assert!(!b.is_zero());
+
+    let (Polynomial(mut a), Polynomial(d)) = (a, b);
+    if a.len() < d.len() {
+        return (Polynomial(vec![T::zero()]), Polynomial(a));
+    }
+    let mut quot = Vec::with_capacity(a.len() - d.len() + 1);
+    let d_deg = d.len() - 1;
+    assert!(a.len() >= d.len());
+    for i in (0..a.len() - d_deg).rev() {
+        // this is safe because the divisor `d` is not zero
+        let q = a[i + d_deg].clone() / d[d_deg].clone();
+        for j in 0..=d_deg {
+            a[i + j] -= d[j].clone() * q.clone();
+        }
+        quot.push(q);
+    }
+    quot.reverse();
+    (Polynomial(quot), Polynomial::new(a))
+}
 
 impl<T> Arbitrary for Polynomial<T>
 where
@@ -612,4 +642,35 @@ fn usize_euclid() {
     assert_eq!(s, R(-9));
     assert_eq!(t, R(47));
     assert_eq!(r, 2);
+}
+
+#[quickcheck]
+fn poly_div(a: Polynomial<Frac>, b: Polynomial<Frac>) -> TestResult {
+    if b.is_zero() || a.degree() < b.degree() {
+        return TestResult::discard();
+    }
+    let s = a.clone();
+    let t = b.clone();
+    let (expected_q, expected_r) = naive_poly_div_with_rem(a, b);
+    let (actual_q, actual_r) = s.div_with_rem(t);
+    assert_eq!(actual_q, expected_q);
+    assert_eq!(actual_r, expected_r);
+    TestResult::passed()
+}
+
+#[test]
+fn fixed_poly_div() {
+    use crate::galois::{GF2561D_P2, MonicPolynomial};
+    let p = Polynomial::new(vec![GF2561D(12), GF2561D(104), GF2561D(104)]);
+    {
+        let (q, r) = naive_poly_div_with_rem(GF2561D_P2::repr(), p.clone());
+        println!("expected q={}, r={}", q, r);
+        assert_eq!(p.clone() * q + r, GF2561D_P2::repr());
+    }
+    {
+        let (q, r) = GF2561D_P2::repr().div_with_rem(p.clone());
+        println!("actual q={}, r={}", q, r);
+        assert_eq!(p * q + r, GF2561D_P2::repr());
+    }
+
 }
