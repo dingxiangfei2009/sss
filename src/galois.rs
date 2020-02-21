@@ -325,7 +325,10 @@ where
 {
     fn div_assign(&mut self, other: Self) {
         let data = take(&mut self.data);
-        self.data = P::reduce_mul(data, TwoSidedInverse::<Multiplicative>::two_sided_inverse(&other).data);
+        self.data = P::reduce_mul(
+            data,
+            TwoSidedInverse::<Multiplicative>::two_sided_inverse(&other).data,
+        );
         debug_assert!(self.data.degree() < P::degree());
     }
 }

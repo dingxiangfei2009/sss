@@ -284,12 +284,13 @@ where
         let mut g = Self::one();
         let two = T::one() + T::one();
         while t > 0 {
+            let e = if t >> 1 > 0 { j } else { target };
             let g_ = g.clone() * g.clone();
-            let g_ = g_.truncate_upto_deg(j);
-            let g_ = g_ * self.truncate_upto_deg(j);
-            let g_ = g_.truncate_upto_deg(j);
+            let g_ = g_.truncate_upto_deg(e);
+            let g_ = g_ * self.truncate_upto_deg(e);
+            let g_ = g_.truncate_upto_deg(e);
             let g_ = g * two.clone() - g_;
-            let g_ = g_.truncate_upto_deg(j);
+            let g_ = g_.truncate_upto_deg(e);
             g = g_;
             t >>= 1;
             j <<= 1;

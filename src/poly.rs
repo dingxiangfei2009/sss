@@ -60,6 +60,42 @@ where
             vec![y; self.n]
         }
     }
+
+    pub fn par_eval(&self, f: Polynomial<F>) -> Vec<F>
+    where
+        F: Send + Sync,
+    {
+        let (_, r) = f.div_with_rem(self.p.clone());
+        if r.degree() > 0 {
+            let mut left = None;
+            let mut right = None;
+            rayon::scope(|s| {
+                s.spawn(|_| {
+                    left = Some(
+                        self.left
+                            .as_ref()
+                            .expect("check the degree")
+                            .eval(r.clone()),
+                    )
+                });
+                s.spawn(|_| {
+                    right = Some(
+                        self.right
+                            .as_ref()
+                            .expect("check the degree")
+                            .eval(r.clone()),
+                    )
+                })
+            });
+            let mut left = left.expect("left computed");
+            left.extend(right.expect("right computed"));
+            left
+        } else {
+            vec![r.0[0].clone()]
+            // let Coord(_, y) = r.eval_at(F::zero());
+            // vec![y; self.n]
+        }
+    }
 }
 
 #[cfg(test)]

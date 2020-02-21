@@ -13,12 +13,14 @@ use crate::{
     field::{ArbitraryElement, FiniteField},
     galois::ExtensionTower,
     linalg::{gaussian_elimination, mat_vec_mul},
+    poly::MultiPointEvalTable,
     pow, Coord, EuclideanDomain, Polynomial,
 };
 
 pub struct GoppaDecoder<F, T> {
     points: Vec<F>,
     g_poly: Polynomial<F>,
+    multipoint_eval: MultiPointEvalTable<F>,
     _p: PhantomData<fn() -> T>,
 }
 
@@ -77,9 +79,9 @@ fn invert_factor_poly<F: Field + Clone>(g_poly: &Polynomial<F>, alpha: F) -> Pol
 
 impl<F, T> GoppaDecoder<F, T>
 where
-    F: FiniteField + Clone + Sync,
+    F: FiniteField + Clone + Sync + Send,
     T: ExtensionTower<Super = F>,
-    T::Bottom: Send,
+    T::Bottom: Send + Sync,
 {
     pub fn decode(&self, sense: Vec<T::Bottom>) -> (Vec<T::Bottom>, Vec<T::Bottom>) {
         let n = self.points.len();
@@ -87,22 +89,23 @@ where
         let t = self.g_poly.degree();
         assert_eq!(sense.len(), t * m, "code length mismatch");
         // syndrome
-        let mut s = Polynomial::zero();
-        for (c, alpha) in sense.iter().zip(&self.points) {
-            s = s + invert_factor_poly(&self.g_poly, alpha.clone()) * T::into_super(c.clone());
-        }
+        let s = sense
+            .par_iter()
+            .zip(&self.points)
+            .map(|(c, a)| invert_factor_poly(&self.g_poly, a.clone()) * T::into_super(c.clone()))
+            .reduce(Polynomial::zero, |a, b| a + b);
         // solve key equation
         let (sigma, omega) = generialized_sugiyama(s, self.g_poly.clone());
         let sigma_ = sigma.clone().formal_derivative();
         let errs: Vec<_> = self
-            .points
-            .par_iter()
+            .multipoint_eval
+            .par_eval(sigma)
+            .into_par_iter()
             .enumerate()
-            .filter_map(|(loc, alpha)| {
-                let Coord(_, e) = sigma.eval_at(alpha.clone());
+            .flat_map(|(loc, e)| {
                 if e.is_zero() {
-                    let Coord(_, p) = omega.eval_at(alpha.clone());
-                    let Coord(_, q) = sigma_.eval_at(alpha.clone());
+                    let Coord(_, p) = omega.eval_at(self.points[loc].clone());
+                    let Coord(_, q) = sigma_.eval_at(self.points[loc].clone());
                     Some((loc, T::try_into_bottom(p / q).expect("check your math")))
                 } else {
                     None
@@ -123,14 +126,15 @@ where
 pub struct BinaryGoppaDecoder<F, T> {
     points: Vec<F>,
     g_poly: Polynomial<F>,
+    multipoint_eval: MultiPointEvalTable<F>,
     _p: PhantomData<fn() -> T>,
 }
 
 impl<F, T> BinaryGoppaDecoder<F, T>
 where
-    F: FiniteField + Clone + Sync,
+    F: FiniteField + Clone + Send + Sync,
     T: ExtensionTower<Super = F>,
-    T::Bottom: Send,
+    T::Bottom: Send + Sync,
 {
     pub fn from_decoder(dec: GoppaDecoder<F, T>) -> Self {
         let char = T::Bottom::characteristic::<Int>().assert_usize();
@@ -138,6 +142,7 @@ where
         Self {
             points: dec.points,
             g_poly: dec.g_poly,
+            multipoint_eval: dec.multipoint_eval,
             _p: PhantomData,
         }
     }
@@ -147,23 +152,24 @@ where
         let t = self.g_poly.degree();
         assert_eq!(sense.len(), t * m, "code length mismatch");
         // syndrome
-        let mut s = Polynomial::zero();
         let g_sqr = pow(self.g_poly.clone(), 2);
-        for (c, alpha) in sense.iter().zip(&self.points) {
-            s = s + invert_factor_poly(&g_sqr, alpha.clone()) * T::into_super(c.clone());
-        }
+        let s = sense
+            .par_iter()
+            .zip(&self.points)
+            .map(|(c, a)| invert_factor_poly(&g_sqr, a.clone()) * T::into_super(c.clone()))
+            .reduce(Polynomial::zero, |a, b| a + b);
         // solve key equation
         let (sigma, omega) = generialized_sugiyama(s, g_sqr);
         let sigma_ = sigma.clone().formal_derivative();
         let errs: Vec<_> = self
-            .points
-            .par_iter()
+            .multipoint_eval
+            .par_eval(sigma)
+            .into_par_iter()
             .enumerate()
-            .filter_map(|(loc, alpha)| {
-                let Coord(_, e) = sigma.eval_at(alpha.clone());
+            .flat_map(|(loc, e)| {
                 if e.is_zero() {
-                    let Coord(_, p) = omega.eval_at(alpha.clone());
-                    let Coord(_, q) = sigma_.eval_at(alpha.clone());
+                    let Coord(_, p) = omega.eval_at(self.points[loc].clone());
+                    let Coord(_, q) = sigma_.eval_at(self.points[loc].clone());
                     Some((loc, T::try_into_bottom(p / q).expect("check your math")))
                 } else {
                     None
@@ -243,6 +249,7 @@ where
         _p: PhantomData,
     };
     let decoder = GoppaDecoder {
+        multipoint_eval: MultiPointEvalTable::build(&alphas),
         points: alphas,
         g_poly: g,
         _p: PhantomData,

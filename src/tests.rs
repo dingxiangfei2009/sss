@@ -660,7 +660,7 @@ fn poly_div(a: Polynomial<Frac>, b: Polynomial<Frac>) -> TestResult {
 
 #[test]
 fn fixed_poly_div() {
-    use crate::galois::{GF2561D_P2, MonicPolynomial};
+    use crate::galois::{MonicPolynomial, GF2561D_P2};
     let p = Polynomial::new(vec![GF2561D(12), GF2561D(104), GF2561D(104)]);
     {
         let (q, r) = naive_poly_div_with_rem(GF2561D_P2::repr(), p.clone());
@@ -672,5 +672,4 @@ fn fixed_poly_div() {
         println!("actual q={}, r={}", q, r);
         assert_eq!(p * q + r, GF2561D_P2::repr());
     }
-
 }
