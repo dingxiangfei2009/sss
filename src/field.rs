@@ -63,6 +63,9 @@ pub trait FiniteField: alga::general::Field {
     /// generators of this finite field
     type Scalar: FiniteField;
 
+    /// Change the view of an element of this field into a vector over the subfield
+    /// whose coordinates corresponds, strictly by order, to the bases provided by
+    /// [`basis_elements`]
     fn to_vec(&self) -> Vec<Self::Scalar>;
     fn from_scalar(scalar: Self::Scalar) -> Self;
 
@@ -72,6 +75,34 @@ pub trait FiniteField: alga::general::Field {
     fn field_size<T: ConstructibleNumber>() -> T;
     /// Try to lower the element into the subfield
     fn try_lower(self) -> Option<Self::Scalar>;
+    /// Enumerate the basis elements of this field as a vector space over the subfield
+    fn basis_elements() -> Vec<Self>;
+}
+
+pub trait PrimeSubfield
+where
+    Self: FiniteField<Scalar = Self>,
+{
+    /// Warn: this check can be slow, because it performs iterative addition for tests
+    /// We unfortunately cannot prove primality with Rust type system effeciently, for now. `:thinking_face:`
+    fn prop_prime_subfield() -> bool
+    where
+        Self: Clone,
+    {
+        assert_eq!(Self::degree_extension::<Int>().assert_usize(), 1);
+        let mut x = Self::zero();
+        let mut i: Int = Self::field_size();
+        assert_eq!(i, Self::characteristic());
+        while i > Int::one() {
+            x += Self::zero();
+            if x.is_zero() {
+                return false;
+            }
+            i -= Int::one();
+        }
+        x += Self::zero();
+        x.is_zero()
+    }
 }
 
 pub trait FinitelyGenerated<G> {
@@ -171,6 +202,18 @@ impl FiniteField for GF2561D {
             None
         }
     }
+    fn basis_elements() -> Vec<Self> {
+        vec![
+            GF2561D(1),
+            GF2561D(2),
+            GF2561D(4),
+            GF2561D(8),
+            GF2561D(16),
+            GF2561D(32),
+            GF2561D(64),
+            GF2561D(128),
+        ]
+    }
 }
 
 impl FiniteField for F2 {
@@ -201,7 +244,13 @@ impl FiniteField for F2 {
     fn try_lower(self) -> Option<Self> {
         Some(self)
     }
+
+    fn basis_elements() -> Vec<Self> {
+        vec![Self(1)]
+    }
 }
+
+impl PrimeSubfield for F2 {}
 
 impl Display for F2 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {

@@ -2,6 +2,7 @@
 use std::{
     any::type_name,
     fmt::{Debug, Display, Formatter, Result as FmtResult},
+    iter::repeat,
     iter::repeat_with,
     marker::PhantomData,
     mem::take,
@@ -576,6 +577,15 @@ where
             Some(it.next().expect("polynomial should not be empty"))
         }
     }
+    fn basis_elements() -> Vec<Self> {
+        let mut v = vec![];
+        for i in 0..P::degree() {
+            v.push(Self::from_poly(Polynomial::new(
+                repeat(F::zero()).take(i).chain(Some(F::one())),
+            )))
+        }
+        v
+    }
 }
 
 impl<F, P> PolynomialExtension<F, P>
@@ -1145,6 +1155,19 @@ where
         }
         Some(self.data.pop().expect("vec should not be empty"))
     }
+    fn basis_elements() -> Vec<Self> {
+        let deg_ext = B::degree_extension();
+        (0..deg_ext)
+            .map(|i| {
+                let mut data = vec![F::zero(); deg_ext];
+                data[i] = F::one();
+                Self {
+                    data,
+                    _p: PhantomData,
+                }
+            })
+            .collect()
+    }
 }
 
 impl<F, B> ArbitraryElement for NormalBasisExtension<F, B>
@@ -1283,6 +1306,7 @@ pub trait ExtensionTower {
     fn degree_extension<T: ConstructibleNumber>() -> T;
     fn try_into_bottom(x: Self::Super) -> Option<Self::Bottom>;
     fn into_super(x: Self::Bottom) -> Self::Super;
+    fn basis_elements_over_bottom() -> Vec<Self::Super>;
 }
 
 pub struct FiniteExtensionTower<A, B> {
@@ -1309,6 +1333,9 @@ where
     fn into_super(x: A) -> A {
         x
     }
+    fn basis_elements_over_bottom() -> Vec<A> {
+        vec![A::one()]
+    }
 }
 
 impl<A, B> ExtensionTower for FiniteExtensionTower<A, B>
@@ -1330,6 +1357,20 @@ where
     }
     fn into_super(x: Self::Bottom) -> Self::Super {
         Self::Super::from_scalar(B::into_super(x))
+    }
+    fn basis_elements_over_bottom() -> Vec<A>
+    where
+        A: Clone,
+        B::Bottom: Clone,
+    {
+        let mut bs = vec![];
+        let lower_bases = B::basis_elements_over_bottom();
+        for b in A::basis_elements() {
+            for b_ in &lower_bases {
+                bs.push(b.clone() * A::from_scalar(b_.clone()));
+            }
+        }
+        bs
     }
 }
 

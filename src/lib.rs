@@ -8,12 +8,13 @@ extern crate quickcheck_macros;
 extern crate derive_more;
 
 use std::{
+    cmp::max,
     fmt::{Display, Formatter, Result as FmtResult},
-    iter::repeat,
+    iter::{repeat, repeat_with},
     ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
-use alga::general::{Additive, Field, Identity};
+use alga::general::{Additive, Field, Identity, Multiplicative, TwoSidedInverse};
 use num::{
     traits::{One, Zero},
     BigUint,
@@ -25,6 +26,7 @@ use serde::{Deserialize, Serialize};
 pub mod array;
 
 pub mod adapter;
+pub mod artin;
 pub mod conv;
 pub mod facts;
 pub mod field;
@@ -39,9 +41,11 @@ pub mod merkle;
 pub mod poly;
 pub mod reed_solomon;
 
-use crate::{adapter::Int, field::int_inj};
-
-pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
+pub use crate::{
+    adapter::Int,
+    field::int_inj,
+    field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2},
+};
 
 pub trait EuclideanDomain<Degree: Ord>: Zero {
     /// Euclidean measure of this domain
@@ -207,7 +211,7 @@ where
 
 impl<T> One for Polynomial<T>
 where
-    T: One + Zero + Clone,
+    T: One + Zero + Sub<Output = T> + Clone,
 {
     fn one() -> Self {
         Polynomial(vec![T::one()])
@@ -254,22 +258,22 @@ where
         let mut divisor = b.clone();
         divisor.0.reverse();
         truncate_high_degree_zeros(&mut divisor.0);
-        let lead_coeff = divisor.0[0].clone();
-        divisor /= lead_coeff.clone();
+        // let lead_coeff = divisor.0[0].clone();
+        // divisor /= lead_coeff.clone();
 
-        divisor = divisor.inv_mod_x_2pow(n - m + 1);
+        divisor = divisor.inv_mod_x_pow(n - m + 1);
         let Polynomial(mut dividend) = self.clone();
         dividend.reverse();
         let Polynomial(mut quotient) = divisor * Polynomial::new(dividend);
         quotient.resize(n - m + 1, T::zero());
         quotient.reverse();
-        let mut quotient = Polynomial::new(quotient);
-        quotient /= lead_coeff;
+        let quotient = Polynomial::new(quotient);
+        // quotient /= lead_coeff;
         let remainder = self - quotient.clone() * b;
         (quotient, remainder)
     }
 
-    fn truncate_upto_deg(&self, deg: usize) -> Self {
+    pub(crate) fn truncate_upto_deg(&self, deg: usize) -> Self {
         if self.degree() >= deg {
             Polynomial::new(self.0[..deg].to_vec())
         } else {
@@ -277,11 +281,13 @@ where
         }
     }
 
-    fn inv_mod_x_2pow(self, target: usize) -> Self {
+    pub(crate) fn inv_mod_x_pow(self, target: usize) -> Self {
         let mut t = target.next_power_of_two();
         t >>= 1;
         let mut j = 2;
-        let mut g = Self::one();
+        let mut g = Polynomial(vec![TwoSidedInverse::<Multiplicative>::two_sided_inverse(
+            &self.0[0],
+        )]);
         let two = T::one() + T::one();
         while t > 0 {
             let e = if t >> 1 > 0 { j } else { target };
@@ -370,24 +376,56 @@ where
 
 impl<T> Mul for Polynomial<T>
 where
-    T: Mul<Output = T> + Zero + Clone,
+    T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
 {
     type Output = Self;
     fn mul(self, other: Self) -> Self {
-        let (Self(left), Self(right)) = (self, other);
-        #[allow(clippy::suspicious_arithmetic_impl)]
-        // REASON: use of plus operator here is sensible
-        let mut r = vec![T::zero(); left.len() + right.len()];
-        #[allow(clippy::suspicious_arithmetic_impl)] // REASON: use of operators here is sensible
-        for (i, left) in left.into_iter().enumerate() {
-            for (r, r_) in r[i..]
-                .iter_mut()
-                .zip(right.iter().cloned().map(|right| left.clone() * right))
-            {
-                *r = r.clone() + r_;
-            }
+        if self.is_zero() || other.is_zero() {
+            return Polynomial::zero();
         }
-        Polynomial::new(r)
+        let (Self(mut left), Self(mut right)) = (self, other);
+        if left.len() < 4 && right.len() < 4 {
+            #[allow(clippy::suspicious_arithmetic_impl)]
+            // REASON: use of plus operator here is sensible
+            let mut r = vec![T::zero(); left.len() + right.len()];
+            #[allow(clippy::suspicious_arithmetic_impl)]
+            // REASON: use of operators here is sensible
+            for (i, left) in left.into_iter().enumerate() {
+                for (r, r_) in r[i..]
+                    .iter_mut()
+                    .zip(right.iter().cloned().map(|right| left.clone() * right))
+                {
+                    *r = r.clone() + r_;
+                }
+            }
+            Polynomial::new(r)
+        } else {
+            // karatsuba
+            let n = max(left.len(), right.len());
+            let m = max(n / 2, 1);
+            let left_high = if left.len() < m {
+                Polynomial::zero()
+            } else {
+                Polynomial::new(left.split_off(m))
+            };
+            let right_high = if right.len() < m {
+                Polynomial::zero()
+            } else {
+                Polynomial::new(right.split_off(m))
+            };
+
+            let left_low = Polynomial::new(left);
+            let right_low = Polynomial::new(right);
+            let high_pdt = left_high.clone() * right_high.clone();
+            let low_pdt = left_low.clone() * right_low.clone();
+            let Polynomial(mid) = (left_low + left_high) * (right_low + right_high)
+                - high_pdt.clone()
+                - low_pdt.clone();
+            let Polynomial(r_high) = high_pdt;
+            let r_high = Polynomial::new(repeat_with(T::zero).take(m * 2).chain(r_high));
+            let r_mid = Polynomial::new(repeat_with(T::zero).take(m).chain(mid));
+            r_high + r_mid + low_pdt
+        }
     }
 }
 
@@ -406,7 +444,7 @@ where
 
 impl<T> MulAssign for Polynomial<T>
 where
-    T: Mul<Output = T> + Zero + Clone,
+    T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
 {
     fn mul_assign(&mut self, rhs: Self) {
         let lhs = self.clone();

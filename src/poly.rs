@@ -92,8 +92,6 @@ where
             left
         } else {
             vec![r.0[0].clone()]
-            // let Coord(_, y) = r.eval_at(F::zero());
-            // vec![y; self.n]
         }
     }
 }

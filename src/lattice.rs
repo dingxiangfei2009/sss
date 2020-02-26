@@ -75,6 +75,9 @@ impl FiniteField for F {
     fn try_lower(self) -> Option<Self::Scalar> {
         Some(self)
     }
+    fn basis_elements() -> Vec<Self> {
+        vec![Self::one()]
+    }
 }
 
 lazy_static! {
