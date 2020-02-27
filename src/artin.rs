@@ -4,7 +4,9 @@ use alga::general::Field;
 use num::{One, Zero};
 
 use crate::{
-    field::FiniteField, galois::ExtensionTower, pow, Coord, EuclideanDomain, Int, Polynomial,
+    field::FiniteField,
+    galois::{ExtensionTower, GF65536NTower, GF65536N},
+    pow, Coord, EuclideanDomain, Int, Polynomial,
 };
 
 pub struct MultipointEvalVZGathen<F, T>
@@ -13,9 +15,8 @@ where
     T: ExtensionTower,
 {
     ss: Vec<Polynomial<F>>,
+    s_2pows: Vec<Vec<Polynomial<F>>>,
     s_betas: Vec<Vec<F>>,
-    points: TreeNode<T::Bottom>,
-    num_points: usize,
     _p: PhantomData<fn() -> T>,
 }
 
@@ -25,7 +26,7 @@ where
     T: ExtensionTower<Super = F>,
     T::Bottom: Clone + Eq,
 {
-    pub fn new(points_: Vec<F>) -> Self {
+    pub fn new() -> Self {
         let bases = T::basis_elements_over_bottom();
         let mut s = Polynomial(vec![F::zero(), F::one()]);
         let mut ss = vec![s.clone()];
@@ -43,16 +44,23 @@ where
             );
             ss.push(s.clone());
         }
-        let num_points = points_.len();
-        let mut points = TreeNode::new(T::Bottom::zero());
-        for (idx, point) in points_.into_iter().enumerate() {
-            points.insert(T::to_vec(point), idx)
+        let mut s_2pows = vec![];
+        {
+            let k = q.next_power_of_two();
+            for s in &ss {
+                let mut d_pow_2 = vec![];
+                let mut d_pow = s.clone();
+                for _ in 0..=k.trailing_zeros() {
+                    d_pow_2.push(d_pow.clone());
+                    d_pow = pow(d_pow, 2);
+                }
+                s_2pows.push(d_pow_2);
+            }
         }
         Self {
             ss,
             s_betas,
-            points,
-            num_points,
+            s_2pows,
             _p: PhantomData,
         }
     }
@@ -67,11 +75,9 @@ where
         let i = k - suffix.len();
         if i == 0 {
             let idx = node.idx.unwrap();
-            eprintln!("reaching {}", idx);
             f.0.drain(..1).map(|x| (idx, x)).collect()
         } else {
-            let taylor = taylor_expansion(f, self.ss[i - 1].clone());
-            eprintln!("i={}", i);
+            let taylor = taylor_expansion_aux(f, self.ss[i - 1].degree(), &self.s_2pows[i - 1]);
             let mut s_beta = F::zero();
             for (j, d) in suffix.iter().enumerate() {
                 s_beta += T::into_super(d.clone()) * self.s_betas[i - 1][suffix.len() - j].clone();
@@ -104,10 +110,14 @@ where
         }
     }
 
-    pub fn eval(&self, f: Polynomial<F>) -> Vec<F> {
-        let mut result = vec![F::zero(); self.num_points];
+    pub fn eval(&self, f: Polynomial<F>, points_: Vec<F>) -> Vec<F> {
+        let mut result = vec![F::zero(); points_.len()];
+        let mut points = TreeNode::new(T::Bottom::zero());
+        for (i, p) in points_.into_iter().enumerate() {
+            points.insert(T::to_vec(p), i)
+        }
         let (_, f) = f.div_with_rem(self.ss[self.ss.len() - 1].clone());
-        for (i, r) in self.eval_at(f, vec![], &self.points) {
+        for (i, r) in self.eval_at(f, vec![], &points) {
             result[i] = r;
         }
         result
@@ -184,7 +194,7 @@ where
     lower
 }
 
-fn taylor_expansion<F>(p: Polynomial<F>, d: Polynomial<F>) -> Vec<Polynomial<F>>
+pub fn taylor_expansion<F>(p: Polynomial<F>, d: Polynomial<F>) -> Vec<Polynomial<F>>
 where
     F: Field + Clone,
 {
@@ -201,18 +211,15 @@ where
     taylor_expansion_aux(p, m, &d_pow_2)
 }
 
+lazy_static::lazy_static! {
+    pub static ref MEVZG_GF65536N: MultipointEvalVZGathen<GF65536N, GF65536NTower> = MultipointEvalVZGathen::new();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    use rand::rngs::OsRng;
-
-    use crate::{
-        field::ArbitraryElement,
-        galois::{GF65536NTower, GF65536N},
-        int_inj,
-        tests::Frac,
-    };
+    use crate::{int_inj, tests::Frac};
 
     #[test]
     fn taylor_exp() {
@@ -278,21 +285,19 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn vz_gathen() {
-        let points = vec![12, 35, 6723, 13, 5829, 0, 4];
-        let points = u16_to_gf65536n(points);
-        let table: MultipointEvalVZGathen<GF65536N, GF65536NTower> =
-            MultipointEvalVZGathen::new(points.clone());
-        let f = Polynomial::new(u16_to_gf65536n(vec![35266, 382, 1]));
-        let result = table.eval(f.clone());
-        assert_eq!(result.len(), points.len());
-        for (r, p) in result.iter().zip(&points) {
-            assert_eq!(r, &f.clone().eval_at(p.clone()).1);
+    #[quickcheck]
+    fn vz_gathen(mut points: Vec<u16>, f: Vec<u16>) {
+        points.sort();
+        points.dedup();
+        if points.len() > core::u16::MAX as usize {
+            return;
         }
-
-        let f = Polynomial::new(u16_to_gf65536n(vec![0, 35266, 382, 1, 2]));
-        let result = table.eval(f.clone());
+        if f.len() > core::u16::MAX as usize {
+            return;
+        }
+        let points = u16_to_gf65536n(points);
+        let f = Polynomial::new(u16_to_gf65536n(f));
+        let result = MEVZG_GF65536N.eval(f.clone(), points.clone());
         assert_eq!(result.len(), points.len());
         for (r, p) in result.iter().zip(&points) {
             assert_eq!(r, &f.clone().eval_at(p.clone()).1);
