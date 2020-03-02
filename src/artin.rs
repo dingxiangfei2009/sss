@@ -2,6 +2,7 @@ use std::{marker::PhantomData, sync::Arc};
 
 use alga::general::Field;
 use num::{One, Zero};
+use rayon::prelude::*;
 
 use crate::{
     field::{FiniteField, F2},
@@ -23,9 +24,9 @@ where
 
 impl<F, T> MultipointEvalVZGathen<F, T>
 where
-    F: FiniteField + Clone,
+    F: FiniteField + Clone + Send + Sync,
     T: ExtensionTower<Super = F>,
-    T::Bottom: Clone + Eq,
+    T::Bottom: Clone + Eq + Send + Sync,
 {
     pub fn new() -> Self {
         let bases = T::basis_elements_over_bottom();
@@ -45,19 +46,20 @@ where
             );
             ss.push(s.clone());
         }
-        let mut s_2pows = vec![];
-        {
+        let s_2pows = {
             let k = q.next_power_of_two();
-            for s in &ss {
-                let mut d_pow_2 = vec![];
-                let mut d_pow = s.clone();
-                for _ in 0..=k.trailing_zeros() {
-                    d_pow_2.push(d_pow.clone());
-                    d_pow = pow(d_pow, 2);
-                }
-                s_2pows.push(d_pow_2);
-            }
-        }
+            ss.par_iter()
+                .map(|s| {
+                    let mut d_pow_2 = vec![];
+                    let mut d_pow = s.clone();
+                    for _ in 0..=k.trailing_zeros() {
+                        d_pow_2.push(d_pow.clone());
+                        d_pow = pow(d_pow, 2);
+                    }
+                    d_pow_2
+                })
+                .collect()
+        };
         Self {
             ss,
             s_betas,
@@ -85,17 +87,17 @@ where
             }
             // eval taylor expansion at s_i = c
             let s_i_beta = self.s_betas[i - 1][0].clone();
-            let mut result = vec![];
-            for child in &node.children {
-                let c = child.value.clone();
-                let omega = s_beta.clone() + s_i_beta.clone() * T::into_super(c);
-                let mut omega_pow = F::one();
-                let mut g = Polynomial::zero();
-                for p in &taylor {
-                    g = g + p.clone() * omega_pow.clone();
-                    omega_pow *= omega.clone();
-                }
-                result.extend(
+            node.children
+                .par_iter()
+                .flat_map(|child| {
+                    let c = child.value.clone();
+                    let omega = s_beta.clone() + s_i_beta.clone() * T::into_super(c);
+                    let mut omega_pow = F::one();
+                    let mut g = Polynomial::zero();
+                    for p in &taylor {
+                        g = g + p.clone() * omega_pow.clone();
+                        omega_pow *= omega.clone();
+                    }
                     self.eval_at(
                         g,
                         suffix
@@ -104,10 +106,9 @@ where
                             .chain(Some(child.value.clone()))
                             .collect(),
                         child,
-                    ),
-                );
-            }
-            result
+                    )
+                })
+                .collect()
         }
     }
 

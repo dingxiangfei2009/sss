@@ -892,12 +892,18 @@ where
     type Output = Self;
     fn mul(self, other: Self) -> Self {
         let mut x = Self::zero();
-        for (i, a) in self.data.iter().enumerate() {
-            for (j, b) in other.data.iter().enumerate() {
-                let (p, q) = if i < j { (i, j) } else { (j, i) };
-                let mut m = B::mul(q - p);
-                m.rotate_right(p);
-                x = x + Self::new(m) * (a.clone() * b.clone());
+        let n = self.data.len();
+        for j in 0..n {
+            let mut m = B::mul(j);
+            for i in 0..n - j {
+                if j == 0 {
+                    x += Self::new(m.clone()) * (self.data[i].clone() * other.data[i].clone());
+                } else {
+                    x += Self::new(m.clone())
+                        * (self.data[i].clone() * other.data[i + j].clone()
+                            + self.data[i + j].clone() * other.data[i].clone());
+                }
+                m.rotate_right(1);
             }
         }
         x

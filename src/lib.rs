@@ -179,6 +179,12 @@ impl<T: Zero> From<Vec<T>> for Polynomial<T> {
 impl<T: Clone + Zero> Add for Polynomial<T> {
     type Output = Self;
     fn add(self, other: Self) -> Self {
+        if self.is_zero() {
+            return other;
+        }
+        if other.is_zero() {
+            return self;
+        }
         let (Polynomial(left), Polynomial(right)) = (self, other);
         let (mut left, right) = if left.len() < right.len() {
             (right, left)
@@ -198,11 +204,15 @@ where
 {
     type Output = Self;
     fn sub(self, other: Self) -> Self {
+        if other.is_zero() {
+            return self;
+        }
         let (Polynomial(mut left), Polynomial(right)) = (self, other);
-        let max = max(left.len(), right.len());
-        left.resize(max, T::zero());
-        for (i, x) in right.into_iter().enumerate() {
-            left[i] = left[i].clone() - x;
+        if left.len() < right.len() {
+            left.resize(right.len(), T::zero());
+        }
+        for (a, b) in left.iter_mut().zip(right) {
+            *a = a.clone() - b;
         }
         Polynomial::from(left)
     }
