@@ -149,12 +149,12 @@ pub trait ArbitraryElement {
     fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash, Serialize, Deserialize)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct F2(pub u8);
 
 /// GF(2^8) with quotient 1 + x^2 + x^3 + x^4 + x^8
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash, Serialize, Deserialize)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct GF2561D(pub u8);
 

@@ -10,7 +10,7 @@ extern crate derive_more;
 use std::{
     cmp::max,
     fmt::{Display, Formatter, Result as FmtResult},
-    iter::{repeat, repeat_with},
+    iter::repeat_with,
     ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
@@ -160,13 +160,19 @@ pub struct Coord<T>(pub T, pub T);
 
 impl<T: Zero> Polynomial<T> {
     pub fn new(coeffs: impl IntoIterator<Item = T>) -> Self {
-        let mut coeffs: Vec<_> = coeffs.into_iter().collect();
-        if coeffs.is_empty() {
-            coeffs.push(T::zero());
+        let coeffs: Vec<_> = coeffs.into_iter().collect();
+        Self::from(coeffs)
+    }
+}
+
+impl<T: Zero> From<Vec<T>> for Polynomial<T> {
+    fn from(mut v: Vec<T>) -> Self {
+        if v.is_empty() {
+            v.push(T::zero());
         } else {
-            truncate_high_degree_zeros(&mut coeffs);
+            truncate_high_degree_zeros(&mut v);
         }
-        Self(coeffs)
+        Polynomial(v)
     }
 }
 
@@ -174,10 +180,15 @@ impl<T: Clone + Zero> Add for Polynomial<T> {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         let (Polynomial(left), Polynomial(right)) = (self, other);
-        let max = std::cmp::max(left.len(), right.len());
-        let left = left.into_iter().chain(repeat(T::zero()));
-        let right = right.into_iter().chain(repeat(T::zero()));
-        Polynomial::new(left.zip(right).map(|(a, b)| a + b).take(max))
+        let (mut left, right) = if left.len() < right.len() {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        for (a, b) in left.iter_mut().zip(right) {
+            *a = a.clone() + b;
+        }
+        Polynomial::from(left)
     }
 }
 
@@ -187,11 +198,13 @@ where
 {
     type Output = Self;
     fn sub(self, other: Self) -> Self {
-        let (Polynomial(left), Polynomial(right)) = (self, other);
-        let max = std::cmp::max(left.len(), right.len());
-        let left = left.into_iter().chain(repeat(T::zero()));
-        let right = right.into_iter().chain(repeat(T::zero()));
-        Polynomial::new(left.zip(right).map(|(a, b)| a - b).take(max))
+        let (Polynomial(mut left), Polynomial(right)) = (self, other);
+        let max = max(left.len(), right.len());
+        left.resize(max, T::zero());
+        for (i, x) in right.into_iter().enumerate() {
+            left[i] = left[i].clone() - x;
+        }
+        Polynomial::from(left)
     }
 }
 
@@ -237,6 +250,19 @@ where
 
     fn div_with_rem(self, other: Self) -> (Self, Self) {
         Polynomial::div(self, other)
+    }
+}
+
+impl<T: Zero> Polynomial<T> {
+    pub fn mul_pow_x(&mut self, pow: usize) {
+        if !self.is_zero() {
+            self.0.splice(..0, repeat_with(T::zero).take(pow));
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        assert!(!self.0.is_empty());
+        self.0.iter().all(|c| c.is_zero())
     }
 }
 
@@ -318,11 +344,6 @@ where
         }
     }
 
-    pub fn is_zero(&self) -> bool {
-        assert!(!self.0.is_empty());
-        self.0.iter().all(|c| c.is_zero())
-    }
-
     pub fn is_one(&self) -> bool {
         assert!(!self.0.is_empty());
         self.0[0] == T::one() && self.0.iter().skip(1).all(Zero::is_zero)
@@ -398,7 +419,7 @@ where
                     *r = r.clone() + r_;
                 }
             }
-            Polynomial::new(r)
+            Polynomial::from(r)
         } else {
             // karatsuba
             let n = max(left.len(), right.len());
@@ -406,24 +427,29 @@ where
             let left_high = if left.len() < m {
                 Polynomial::zero()
             } else {
-                Polynomial::new(left.split_off(m))
+                Polynomial::from(left.split_off(m))
             };
             let right_high = if right.len() < m {
                 Polynomial::zero()
             } else {
-                Polynomial::new(right.split_off(m))
+                Polynomial::from(right.split_off(m))
             };
 
-            let left_low = Polynomial::new(left);
-            let right_low = Polynomial::new(right);
-            let high_pdt = left_high.clone() * right_high.clone();
+            let left_low = Polynomial::from(left);
+            let right_low = Polynomial::from(right);
+            let mut high_pdt = left_high.clone() * right_high.clone();
             let low_pdt = left_low.clone() * right_low.clone();
-            let Polynomial(mid) = (left_low + left_high) * (right_low + right_high)
+            let mut mid = (left_low + left_high) * (right_low + right_high)
                 - high_pdt.clone()
                 - low_pdt.clone();
-            let Polynomial(r_high) = high_pdt;
-            let r_high = Polynomial::new(repeat_with(T::zero).take(m * 2).chain(r_high));
-            let r_mid = Polynomial::new(repeat_with(T::zero).take(m).chain(mid));
+            let r_high = {
+                high_pdt.mul_pow_x(m * 2);
+                high_pdt
+            };
+            let r_mid = {
+                mid.mul_pow_x(m);
+                mid
+            };
             r_high + r_mid + low_pdt
         }
     }
@@ -447,7 +473,7 @@ where
     T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
 {
     fn mul_assign(&mut self, rhs: Self) {
-        let lhs = self.clone();
+        let lhs = std::mem::take(self);
         *self = lhs * rhs;
     }
 }

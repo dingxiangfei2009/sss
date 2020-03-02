@@ -1,18 +1,19 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, sync::Arc};
 
 use alga::general::Field;
 use num::{One, Zero};
 
 use crate::{
-    field::FiniteField,
+    field::{FiniteField, F2},
     galois::{ExtensionTower, GF65536NTower, GF65536N},
+    poly::MultipointEvaluator,
     pow, Coord, EuclideanDomain, Int, Polynomial,
 };
 
+#[derive(Clone, Debug)]
 pub struct MultipointEvalVZGathen<F, T>
 where
     F: FiniteField,
-    T: ExtensionTower,
 {
     ss: Vec<Polynomial<F>>,
     s_2pows: Vec<Vec<Polynomial<F>>>,
@@ -74,8 +75,8 @@ where
         let k = self.ss.len() - 1;
         let i = k - suffix.len();
         if i == 0 {
-            let idx = node.idx.unwrap();
-            f.0.drain(..1).map(|x| (idx, x)).collect()
+            let x = f.0.drain(..1).next().expect("at least one coefficient");
+            node.idx.iter().map(|&idx| (idx, x.clone())).collect()
         } else {
             let taylor = taylor_expansion_aux(f, self.ss[i - 1].degree(), &self.s_2pows[i - 1]);
             let mut s_beta = F::zero();
@@ -110,23 +111,47 @@ where
         }
     }
 
+    fn eval_from_node(&self, f: Polynomial<F>, n: usize, node: &TreeNode<T::Bottom>) -> Vec<F> {
+        let mut result = vec![F::zero(); n];
+        let (_, f) = f.div_with_rem(self.ss[self.ss.len() - 1].clone());
+        for (i, r) in self.eval_at(f, vec![], node) {
+            result[i] = r;
+        }
+        result
+    }
+
     pub fn eval(&self, f: Polynomial<F>, points_: Vec<F>) -> Vec<F> {
-        let mut result = vec![F::zero(); points_.len()];
+        let n = points_.len();
         let mut points = TreeNode::new(T::Bottom::zero());
         for (i, p) in points_.into_iter().enumerate() {
             points.insert(T::to_vec(p), i)
         }
-        let (_, f) = f.div_with_rem(self.ss[self.ss.len() - 1].clone());
-        for (i, r) in self.eval_at(f, vec![], &points) {
-            result[i] = r;
+        self.eval_from_node(f, n, &points)
+    }
+}
+
+pub struct GF65536NPreparedMultipointEvalVZG {
+    tree: TreeNode<F2>,
+    num_points: usize,
+}
+
+impl MultipointEvaluator<GF65536N> for GF65536NPreparedMultipointEvalVZG {
+    fn eval(&self, f: Polynomial<GF65536N>) -> Vec<GF65536N> {
+        MEVZG_GF65536N.eval_from_node(f, self.num_points, &self.tree)
+    }
+    fn prepare(points: Vec<GF65536N>) -> Self {
+        let num_points = points.len();
+        let mut tree = TreeNode::new(F2::zero());
+        for (i, p) in points.into_iter().enumerate() {
+            tree.insert(GF65536NTower::to_vec(p), i)
         }
-        result
+        Self { num_points, tree }
     }
 }
 
 struct TreeNode<F> {
     value: F,
-    idx: Option<usize>,
+    idx: Vec<usize>,
     children: Vec<TreeNode<F>>,
 }
 
@@ -134,7 +159,7 @@ impl<F> TreeNode<F> {
     fn new(value: F) -> Self {
         Self {
             value,
-            idx: None,
+            idx: vec![],
             children: vec![],
         }
     }
@@ -149,7 +174,7 @@ impl<F> TreeNode<F> {
                 }
             }
             let mut node = Self::new(value);
-            node.idx = Some(idx);
+            node.idx = vec![idx];
             node.insert(path, idx);
             self.children.push(node);
         }
@@ -212,7 +237,7 @@ where
 }
 
 lazy_static::lazy_static! {
-    pub static ref MEVZG_GF65536N: MultipointEvalVZGathen<GF65536N, GF65536NTower> = MultipointEvalVZGathen::new();
+    pub static ref MEVZG_GF65536N: Arc<MultipointEvalVZGathen<GF65536N, GF65536NTower>> = Arc::new(MultipointEvalVZGathen::new());
 }
 
 #[cfg(test)]

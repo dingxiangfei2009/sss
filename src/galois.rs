@@ -17,7 +17,7 @@ use alga::general::{
 use ndarray::Array2;
 use num::{One, Zero};
 use rand::RngCore;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     adapter::Int,
@@ -134,10 +134,31 @@ where
     }
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct PolynomialExtension<F, P> {
     data: Polynomial<F>,
     _p: PhantomData<fn() -> P>,
+}
+
+impl<F, P> Serialize for PolynomialExtension<F, P>
+where
+    F: Serialize,
+{
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.data.serialize(s)
+    }
+}
+
+impl<'a, F, P> Deserialize<'a> for PolynomialExtension<F, P>
+where
+    F: Deserialize<'a>,
+{
+    fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
+        let data = Polynomial::<F>::deserialize(d)?;
+        Ok(Self {
+            data,
+            _p: PhantomData,
+        })
+    }
 }
 
 impl<F, P> Debug for PolynomialExtension<F, P>
@@ -679,10 +700,31 @@ where
 }
 
 /// Galois field extension over a subfield, through a normal basis
-#[derive(Serialize, Deserialize)]
 pub struct NormalBasisExtension<F, B> {
     data: Vec<F>,
     _p: PhantomData<fn() -> B>,
+}
+
+impl<F, B> Serialize for NormalBasisExtension<F, B>
+where
+    F: Serialize,
+{
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.data.serialize(s)
+    }
+}
+
+impl<'a, F, B> Deserialize<'a> for NormalBasisExtension<F, B>
+where
+    F: Deserialize<'a>,
+{
+    fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
+        let data = Vec::deserialize(d)?;
+        Ok(Self {
+            data,
+            _p: PhantomData,
+        })
+    }
 }
 
 impl<F, B> Debug for NormalBasisExtension<F, B>
@@ -779,16 +821,11 @@ where
     F: FiniteField,
 {
     type Output = Self;
-    fn add(self, other: Self) -> Self {
-        Self {
-            data: self
-                .data
-                .into_iter()
-                .zip(other.data)
-                .map(|(a, b)| a + b)
-                .collect(),
-            _p: PhantomData,
+    fn add(mut self, other: Self) -> Self {
+        for (a, b) in self.data.iter_mut().zip(other.data) {
+            *a += b;
         }
+        self
     }
 }
 
@@ -1309,10 +1346,12 @@ pub trait ExtensionTower {
     fn basis_elements_over_bottom() -> Vec<Self::Super>;
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct FiniteExtensionTower<A, B> {
     _p: PhantomData<fn() -> (A, B)>,
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct BottomField;
 
 impl<A> ExtensionTower for FiniteExtensionTower<A, BottomField>

@@ -2,6 +2,11 @@ use alga::general::Field;
 
 use crate::{Coord, EuclideanDomain, Polynomial};
 
+pub trait MultipointEvaluator<F> {
+    fn prepare(points: Vec<F>) -> Self;
+    fn eval(&self, p: Polynomial<F>) -> Vec<F>;
+}
+
 pub struct MultiPointEvalTable<F> {
     n: usize,
     p: Polynomial<F>,
@@ -60,39 +65,17 @@ where
             vec![y; self.n]
         }
     }
+}
 
-    pub fn par_eval(&self, f: Polynomial<F>) -> Vec<F>
-    where
-        F: Send + Sync,
-    {
-        let (_, r) = f.div_with_rem(self.p.clone());
-        if r.degree() > 0 {
-            let mut left = None;
-            let mut right = None;
-            rayon::scope(|s| {
-                s.spawn(|_| {
-                    left = Some(
-                        self.left
-                            .as_ref()
-                            .expect("check the degree")
-                            .eval(r.clone()),
-                    )
-                });
-                s.spawn(|_| {
-                    right = Some(
-                        self.right
-                            .as_ref()
-                            .expect("check the degree")
-                            .eval(r.clone()),
-                    )
-                })
-            });
-            let mut left = left.expect("left computed");
-            left.extend(right.expect("right computed"));
-            left
-        } else {
-            vec![r.0[0].clone()]
-        }
+impl<F> MultipointEvaluator<F> for MultiPointEvalTable<F>
+where
+    F: Field + Clone,
+{
+    fn prepare(points: Vec<F>) -> Self {
+        Self::build(&points)
+    }
+    fn eval(&self, f: Polynomial<F>) -> Vec<F> {
+        MultiPointEvalTable::eval(self, f)
     }
 }
 
