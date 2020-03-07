@@ -1,11 +1,11 @@
-use std::{marker::PhantomData, sync::Arc};
+use std::{convert::TryInto, iter::repeat_with, marker::PhantomData, sync::Arc};
 
 use alga::general::Field;
 use num::{One, Zero};
 use rayon::prelude::*;
 
 use crate::{
-    field::{FiniteField, F2},
+    field::{FiniteField, PrimeSubfield, F2},
     galois::{ExtensionTower, GF65536NTower, GF65536N},
     poly::MultipointEvaluator,
     pow, Coord, EuclideanDomain, Int, Polynomial,
@@ -241,92 +241,150 @@ lazy_static::lazy_static! {
     pub static ref MEVZG_GF65536N: Arc<MultipointEvalVZGathen<GF65536N, GF65536NTower>> = Arc::new(MultipointEvalVZGathen::new());
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::{int_inj, tests::Frac};
-
-    #[test]
-    fn taylor_exp() {
-        let p = Polynomial(vec![Frac::one(), -int_inj::<Frac, _>(2), Frac::one()]);
-        let d = Polynomial(vec![-Frac::one(), Frac::one()]);
-        assert_eq!(
-            taylor_expansion(p, d),
-            vec![
-                Polynomial(vec![Frac::zero()]),
-                Polynomial(vec![Frac::zero()]),
-                Polynomial(vec![Frac::one()]),
-            ]
-        );
-        let p = Polynomial(vec![Frac::zero(), -int_inj::<Frac, _>(2), Frac::one()]);
-        let d = Polynomial(vec![-Frac::one(), Frac::one()]);
-        assert_eq!(
-            taylor_expansion(p, d),
-            vec![
-                Polynomial(vec![-Frac::one()]),
-                Polynomial(vec![Frac::zero()]),
-                Polynomial(vec![Frac::one()]),
-            ]
-        );
-        let p: Vec<Frac> = (0..9).map(|x| int_inj(x)).collect();
-        let p = Polynomial::new(p);
-        let d: Vec<Frac> = [1, 2, 1, 4].iter().map(|&x| int_inj(x)).collect();
-        let d = Polynomial::new(d);
-        let expected = vec![
-            Polynomial(vec![
-                -int_inj::<Frac, _>(533) / int_inj::<Frac, _>(1024),
-                -int_inj::<Frac, _>(315) / int_inj::<Frac, _>(512),
-                int_inj::<Frac, _>(259) / int_inj::<Frac, _>(1024),
-            ]),
-            Polynomial(vec![
-                int_inj::<Frac, _>(789) / int_inj::<Frac, _>(1024),
-                int_inj::<Frac, _>(227) / int_inj::<Frac, _>(256),
-                -int_inj::<Frac, _>(35) / int_inj::<Frac, _>(64),
-            ]),
-            Polynomial(vec![
-                -Frac::one() / int_inj::<Frac, _>(4),
-                int_inj::<Frac, _>(3) / int_inj::<Frac, _>(16),
-                Frac::one() / int_inj::<Frac, _>(2),
-            ]),
-        ];
-        assert_eq!(taylor_expansion(p, d), expected);
+pub fn build_cyclotomic_polynomial<F>(mut idx: usize) -> Polynomial<F>
+where
+    F: Field + Clone,
+{
+    {
+        let idx: u32 = idx.try_into().unwrap();
+        assert!(idx < std::u32::MAX);
     }
-
-    fn u16_to_gf65536n(xs: Vec<u16>) -> Vec<GF65536N> {
-        let bases = GF65536NTower::basis_elements_over_bottom();
-        xs.into_iter()
-            .map(|mut x| {
-                let mut y = GF65536N::zero();
-                let mut bases = bases.iter();
-                while x > 0 {
-                    let basis = bases.next().unwrap();
-                    if x & 1 > 0 {
-                        y += basis.clone();
-                    }
-                    x >>= 1;
-                }
-                y
-            })
-            .collect()
+    let mut primes = crate::primes::PRIMEU16.iter();
+    let mut phi = Polynomial(vec![-F::one(), F::one()]);
+    while idx > 1 {
+        let p = match primes.next() {
+            Some(p) => *p as usize,
+            None => idx,
+        };
+        if idx % p == 0 {
+            let mut m = 0;
+            while idx % p == 0 {
+                idx /= p;
+                m += 1;
+            }
+            let Coord(_, phi_) = phi.eval_at(Polynomial(
+                repeat_with(F::zero).take(p).chain(Some(F::one())).collect(),
+            ));
+            let (q, r) = phi_.div_with_rem(phi);
+            assert!(r.is_zero());
+            if m > 1 {
+                let pow = pow(p, m - 1);
+                phi = q
+                    .eval_at(Polynomial(
+                        repeat_with(F::zero)
+                            .take(pow)
+                            .chain(Some(F::one()))
+                            .collect(),
+                    ))
+                    .1;
+            } else {
+                phi = q;
+            }
+        }
     }
+    phi
+}
 
-    #[quickcheck]
-    fn vz_gathen(mut points: Vec<u16>, f: Vec<u16>) {
-        points.sort();
-        points.dedup();
-        if points.len() > core::u16::MAX as usize {
-            return;
+fn compose<F>(p: Polynomial<F>, r: Polynomial<F>) -> Polynomial<F>
+where
+    F: PrimeSubfield + Clone,
+{
+    let char = F::characteristic::<Int>().assert_usize();
+    let d = p.degree();
+    let mut c = 1;
+    let mut n = 0;
+    while c * char <= d {
+        c *= char;
+        n += 1;
+    }
+    if n > 0 {
+        let Polynomial(p) = p;
+        let Coord(_, r_) = r.eval_at(Polynomial(
+            repeat_with(F::zero).take(c).chain(Some(F::one())).collect(),
+        ));
+        let mut q: Polynomial<F> = Polynomial::zero();
+        for c in p.chunks(c).rev() {
+            let q_ = compose(Polynomial::from(c.to_vec()), r.clone());
+            q = q * r_.clone() + q_;
         }
-        if f.len() > core::u16::MAX as usize {
-            return;
-        }
-        let points = u16_to_gf65536n(points);
-        let f = Polynomial::new(u16_to_gf65536n(f));
-        let result = MEVZG_GF65536N.eval(f.clone(), points.clone());
-        assert_eq!(result.len(), points.len());
-        for (r, p) in result.iter().zip(&points) {
-            assert_eq!(r, &f.clone().eval_at(p.clone()).1);
-        }
+        q
+    } else {
+        p.eval_at(r).1
     }
 }
+
+/// Build Artin-Schreier tower, where the initial field extension is defined by the `initial` equation.
+pub fn build_tower<F>(initial: Polynomial<F>, height: usize) -> Polynomial<F>
+where
+    F: PrimeSubfield + Clone,
+{
+    let char = F::characteristic::<Int>().assert_usize();
+    {
+        let char: u32 = char.try_into().unwrap();
+        assert!(char < std::u32::MAX / 2, "prime subfield is too big, sorry");
+    }
+    let d = initial.degree();
+    {
+        assert!(d > 1);
+        assert!(!initial.coeff(initial.degree() - 1).is_zero(), "initial element has a zero trace; replace initial defining polynomial f(x) with f(x-1)");
+    }
+    let cyclotomic_index = char * 2 - 1;
+    let cyclotomic_poly = build_cyclotomic_polynomial::<F>(cyclotomic_index);
+    let r = Polynomial(
+        Some(-F::one())
+            .into_iter()
+            .chain(repeat_with(F::zero))
+            .take(char)
+            .chain(Some(F::one()))
+            .collect(),
+    );
+    let mut q = compose(initial, r.clone());
+    for i in 1..height {
+        if i == 1 && char == 2 && d % 2 == 1 {
+            q = compose(q, r.clone());
+            continue;
+        }
+        let mut x_pow = Polynomial::one();
+        let mut f: Polynomial<Polynomial<F>> = Polynomial::one();
+        for _ in 0..cyclotomic_index {
+            let f_ = {
+                let mut x = Polynomial::<F>::one();
+                let mut coeffs = vec![];
+                for f in q.0.clone() {
+                    coeffs.push(x.clone() * f);
+                    let (_, r) = (x * x_pow.clone()).div_with_rem(cyclotomic_poly.clone());
+                    x = r;
+                }
+                Polynomial::new(coeffs)
+            };
+            let Polynomial(mut f_) = f * f_;
+            for f in &mut f_ {
+                let (_, r) = std::mem::take(f).div_with_rem(cyclotomic_poly.clone());
+                *f = r;
+            }
+            f = Polynomial::from(f_);
+            x_pow.mul_pow_x(1);
+            {
+                let (_, r) = x_pow.div_with_rem(cyclotomic_poly.clone());
+                x_pow = r;
+            }
+        }
+        let f: Polynomial<F> = {
+            let mut coeffs = vec![];
+            for (i, c) in f.0.into_iter().enumerate() {
+                if i % cyclotomic_index == 0 {
+                    assert_eq!(c.degree(), 0);
+                    coeffs.extend(c.0);
+                } else {
+                    assert!(c.is_zero())
+                }
+            }
+            Polynomial::from(coeffs)
+        };
+        q = compose(f, r.clone());
+    }
+    q
+}
+
+#[cfg(test)]
+mod tests;

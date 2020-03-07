@@ -39,6 +39,7 @@ pub mod lfsr;
 pub mod linalg;
 pub mod merkle;
 pub mod poly;
+pub mod primes;
 pub mod reed_solomon;
 
 pub use crate::{
@@ -163,6 +164,16 @@ impl<T: Zero> Polynomial<T> {
         let coeffs: Vec<_> = coeffs.into_iter().collect();
         Self::from(coeffs)
     }
+    pub fn coeff(&self, deg: usize) -> T
+    where
+        T: Clone,
+    {
+        if deg < self.0.len() {
+            self.0[deg].clone()
+        } else {
+            T::zero()
+        }
+    }
 }
 
 impl<T: Zero> From<Vec<T>> for Polynomial<T> {
@@ -276,6 +287,12 @@ impl<T: Zero> Polynomial<T> {
     }
 }
 
+impl<T> From<T> for Polynomial<T> {
+    fn from(x: T) -> Self {
+        Polynomial(vec![x])
+    }
+}
+
 impl<T> Polynomial<T>
 where
     T: Field + Clone,
@@ -359,11 +376,14 @@ where
         self.0[0] == T::one() && self.0.iter().skip(1).all(Zero::is_zero)
     }
 
-    pub fn eval_at(&self, x: T) -> Coord<T> {
-        let mut y = <T as Identity<Additive>>::identity();
+    pub fn eval_at<U>(&self, x: U) -> Coord<U>
+    where
+        U: Clone + Mul<Output = U> + Mul<T, Output = U> + From<T> + Zero,
+    {
+        let mut y = U::zero();
         for a in self.0.iter().rev() {
-            y *= x.clone();
-            y += a.clone();
+            y = y * x.clone();
+            y = y + U::from(a.clone());
         }
         Coord(x, y)
     }
@@ -434,12 +454,12 @@ where
             // karatsuba
             let n = max(left.len(), right.len());
             let m = max(n / 2, 1);
-            let left_high = if left.len() < m {
+            let left_high: Polynomial<T> = if left.len() < m {
                 Polynomial::zero()
             } else {
                 Polynomial::from(left.split_off(m))
             };
-            let right_high = if right.len() < m {
+            let right_high: Polynomial<T> = if right.len() < m {
                 Polynomial::zero()
             } else {
                 Polynomial::from(right.split_off(m))
@@ -447,9 +467,9 @@ where
 
             let left_low = Polynomial::from(left);
             let right_low = Polynomial::from(right);
-            let mut high_pdt = left_high.clone() * right_high.clone();
-            let low_pdt = left_low.clone() * right_low.clone();
-            let mut mid = (left_low + left_high) * (right_low + right_high)
+            let mut high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
+            let low_pdt: Polynomial<_> = left_low.clone() * right_low.clone();
+            let mut mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
                 - high_pdt.clone()
                 - low_pdt.clone();
             let r_high = {
