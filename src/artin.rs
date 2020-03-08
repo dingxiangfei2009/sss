@@ -1,4 +1,10 @@
-use std::{convert::TryInto, iter::repeat_with, marker::PhantomData, sync::Arc};
+use std::{
+    convert::TryInto,
+    fmt::{Debug, Formatter, Result as FmtResult},
+    iter::repeat_with,
+    marker::PhantomData,
+    sync::{Arc, RwLock},
+};
 
 use alga::general::Field;
 use num::{One, Zero};
@@ -11,13 +17,87 @@ use crate::{
     pow, Coord, EuclideanDomain, Int, Polynomial,
 };
 
+struct LazyListInner<T, S, G> {
+    inner: Vec<T>,
+    state: Option<S>,
+    generator: G,
+}
+
+impl<T, S, G> LazyListInner<T, S, G>
+where
+    T: Clone,
+    G: FnMut(S) -> (S, T),
+{
+    fn generate(&mut self, idx: usize) -> T {
+        let mut state = self.state.take().expect("state must be present");
+        while idx >= self.inner.len() {
+            let (state_, val) = (self.generator)(state);
+            self.inner.push(val);
+            state = state_;
+        }
+        self.state = Some(state);
+        self.inner[idx].clone()
+    }
+}
+
+struct LazyList<T, S, G> {
+    inner: Arc<RwLock<LazyListInner<T, S, G>>>,
+}
+
+impl<T, S, G> Clone for LazyList<T, S, G> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+impl<T, S, G> Debug for LazyList<T, S, G> {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        f.debug_struct("LazyList").finish()
+    }
+}
+
+impl<T, S, G> LazyList<T, S, G> {
+    fn new(state: S, generator: G) -> Self {
+        let state = Some(state);
+        Self {
+            inner: Arc::new(RwLock::new(LazyListInner {
+                inner: vec![],
+                state,
+                generator,
+            })),
+        }
+    }
+    fn get(&self, idx: usize) -> T
+    where
+        T: Clone,
+        G: FnMut(S) -> (S, T),
+    {
+        {
+            let inner = self.inner.read().expect("lock poisoned");
+            if idx < inner.inner.len() {
+                return inner.inner[idx].clone();
+            }
+        }
+        let mut inner = self.inner.write().expect("lock poisoned");
+        inner.generate(idx)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MultipointEvalVZGathen<F, T>
 where
     F: FiniteField,
 {
     ss: Vec<Polynomial<F>>,
-    s_2pows: Vec<Vec<Polynomial<F>>>,
+    s_2pows: Vec<
+        LazyList<
+            Polynomial<F>,
+            Polynomial<F>,
+            Box<dyn Send + Sync + FnMut(Polynomial<F>) -> (Polynomial<F>, Polynomial<F>)>,
+        >,
+    >,
     s_betas: Vec<Vec<F>>,
     _p: PhantomData<fn() -> T>,
 }
@@ -46,20 +126,19 @@ where
             );
             ss.push(s.clone());
         }
-        let s_2pows = {
-            let k = q.next_power_of_two();
-            ss.par_iter()
-                .map(|s| {
-                    let mut d_pow_2 = vec![];
-                    let mut d_pow = s.clone();
-                    for _ in 0..=k.trailing_zeros() {
-                        d_pow_2.push(d_pow.clone());
-                        d_pow = pow(d_pow, 2);
-                    }
-                    d_pow_2
-                })
-                .collect()
-        };
+        let s_2pows = ss
+            .iter()
+            .cloned()
+            .map(|s| {
+                LazyList::new(
+                    s,
+                    Box::new(|s: Polynomial<F>| {
+                        let next_2pow = pow(s.clone(), 2);
+                        (next_2pow, s)
+                    }) as Box<dyn Send + Sync + FnMut(_) -> _>,
+                )
+            })
+            .collect();
         Self {
             ss,
             s_betas,
@@ -77,6 +156,7 @@ where
         let k = self.ss.len() - 1;
         let i = k - suffix.len();
         if i == 0 {
+            // eval the polynomial at 0
             let x = f.0.drain(..1).next().expect("at least one coefficient");
             node.idx.iter().map(|&idx| (idx, x.clone())).collect()
         } else {
@@ -188,13 +268,14 @@ fn lsb_usize(x: usize) -> usize {
     b
 }
 
-fn taylor_expansion_aux<F>(
+fn taylor_expansion_aux<F, S, G>(
     p: Polynomial<F>,
     m: usize,
-    d_pow: &[Polynomial<F>],
+    d_pow: &LazyList<Polynomial<F>, S, G>,
 ) -> Vec<Polynomial<F>>
 where
     F: Field + Clone,
+    G: FnMut(S) -> (S, Polynomial<F>),
 {
     let n = p.degree();
     if n < m {
@@ -205,7 +286,7 @@ where
     loop {
         let b = lsb_usize(t);
         if b > 0 {
-            modulo *= d_pow[b.trailing_zeros() as usize].clone();
+            modulo *= d_pow.get(b.trailing_zeros() as usize);
             t -= b;
         } else {
             break;
@@ -224,16 +305,15 @@ pub fn taylor_expansion<F>(p: Polynomial<F>, d: Polynomial<F>) -> Vec<Polynomial
 where
     F: Field + Clone,
 {
-    let n = p.degree();
     let m = d.degree();
     assert_ne!(m, 0, "no tayler expansion of polynomials at 1");
-    let k = (n / m).next_power_of_two();
-    let mut d_pow_2 = vec![];
-    let mut d_pow = d;
-    for _ in 0..=k.trailing_zeros() {
-        d_pow_2.push(d_pow.clone());
-        d_pow = pow(d_pow, 2);
-    }
+    let d_pow_2 = LazyList::new(
+        d,
+        Box::new(|d: Polynomial<F>| {
+            let next_2pow = pow(d.clone(), 2);
+            (next_2pow, d)
+        }) as Box<dyn Send + Sync + FnMut(_) -> _>,
+    );
     taylor_expansion_aux(p, m, &d_pow_2)
 }
 

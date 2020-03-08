@@ -38,7 +38,7 @@ fn decode_large() {
     let dec: GoppaDecoder<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG> =
         serde_json::from_str(include_str!("mc.pri")).unwrap();
     let dec = BinaryGoppaDecoder::from_decoder(dec);
-    for _ in 0..4 {
+    for _ in 0..8 {
         let mut x = vec![0; n];
         for _ in 0..t {
             x[u.sample(&mut OsRng)] = 1;
