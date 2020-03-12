@@ -17,6 +17,9 @@ use crate::{
     pow, Coord, EuclideanDomain, Polynomial,
 };
 
+mod ser;
+pub use self::ser::BinaryPacked;
+
 #[derive(Clone)]
 pub struct GoppaDecoder<F, T, M> {
     points: Vec<F>,
@@ -499,105 +502,5 @@ mod tests {
         assert_eq!(v, expected_v);
         let (_, e_) = dec.decode(v);
         assert_eq!(e_, e);
-    }
-}
-
-mod ser {
-    use super::*;
-
-    use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
-
-    #[derive(Serialize, Deserialize)]
-    pub struct GoppaEncoderRepr<F> {
-        t: usize,
-        parity_check: Vec<F>,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub struct GoppaDecoderRepr<F> {
-        points: Vec<F>,
-        g: Polynomial<F>,
-        invert_factors: Option<Vec<Polynomial<F>>>,
-    }
-
-    impl<F, T> Serialize for GoppaEncoder<F, T>
-    where
-        F: Clone + Serialize,
-    {
-        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            // follow the logical order
-            let parity_check = self.parity_check.iter().cloned().collect();
-            let repr = GoppaEncoderRepr {
-                t: self.t,
-                parity_check,
-            };
-            repr.serialize(serializer)
-        }
-    }
-
-    impl<F, T, M> Serialize for GoppaDecoder<F, T, M>
-    where
-        F: Clone + Serialize,
-    {
-        fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-            let repr = GoppaDecoderRepr {
-                points: self.points.clone(),
-                g: self.g_poly.clone(),
-                invert_factors: Some(self.invert_factors.clone()),
-            };
-            repr.serialize(serializer)
-        }
-    }
-
-    impl<'a, F, T> Deserialize<'a> for GoppaEncoder<F, T>
-    where
-        F: FiniteField + Clone + Deserialize<'a>,
-        T: ExtensionTower<Bottom = F>,
-    {
-        fn deserialize<D: Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
-            let GoppaEncoderRepr { t, parity_check } =
-                GoppaEncoderRepr::<F>::deserialize(deserializer)?;
-            let m = T::degree_extension::<Int>().assert_usize();
-            let parity_check_len = parity_check.len();
-            let s = parity_check_len / m / t;
-            let parity_check = Array2::from_shape_vec((m * t, s), parity_check).map_err(|_| {
-                let s = (s * m * t).to_string();
-                let s = &s as &str;
-                D::Error::invalid_length(parity_check_len, &s)
-            })?;
-            Ok(Self {
-                parity_check,
-                t,
-                _p: PhantomData,
-            })
-        }
-    }
-
-    impl<'a, F, T, M> Deserialize<'a> for GoppaDecoder<F, T, M>
-    where
-        F: Clone + Deserialize<'a> + Send + Sync + Field,
-        M: MultipointEvaluator<F>,
-    {
-        fn deserialize<D: Deserializer<'a>>(deserializer: D) -> Result<Self, D::Error> {
-            let GoppaDecoderRepr {
-                points,
-                g,
-                invert_factors,
-            } = GoppaDecoderRepr::deserialize(deserializer)?;
-            let invert_factors = match invert_factors {
-                Some(fs) => fs,
-                None => points
-                    .par_iter()
-                    .map(|alpha: &F| invert_factor_poly(&g, alpha.clone()))
-                    .collect(),
-            };
-            Ok(Self {
-                multipoint_eval: M::prepare(points.clone()),
-                points,
-                g_poly: g,
-                invert_factors,
-                _p: PhantomData,
-            })
-        }
     }
 }

@@ -676,12 +676,12 @@ pub struct Reconciliator([bool; KEY_SIZE]);
 
 impl Reconciliator {
     pub fn into_bytes(&self) -> Vec<u8> {
-        let mut v = BitVec::<LittleEndian, u8>::new();
+        let mut v = BitVec::<Lsb0, u8>::new();
         v.extend(self.0.iter().copied());
         v.into_vec()
     }
     pub fn from_bytes(b: Vec<u8>) -> Self {
-        let b = BitVec::<LittleEndian, u8>::from_vec(b);
+        let b = BitVec::<Lsb0, u8>::from_vec(b);
         let mut r = [false; KEY_SIZE];
         for i in 0..KEY_SIZE {
             r[i] = *b.get(i).unwrap_or(&false);
@@ -692,7 +692,7 @@ impl Reconciliator {
 
 impl Serialize for Reconciliator {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut v = BitVec::<LittleEndian, u64>::new();
+        let mut v = BitVec::<Lsb0, u64>::new();
         v.extend(self.0.iter().copied());
         v.serialize(s)
     }
@@ -700,7 +700,7 @@ impl Serialize for Reconciliator {
 
 impl<'a> Deserialize<'a> for Reconciliator {
     fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
-        let mut v = BitVec::<LittleEndian, u64>::deserialize(d)?;
+        let mut v = BitVec::<Lsb0, u64>::deserialize(d)?;
         v.resize(KEY_SIZE, false);
         let mut r: [MaybeUninit<bool>; KEY_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
         for (r, v) in r.iter_mut().zip(&v) {
@@ -901,7 +901,7 @@ impl SigningKey {
         input.extend(b", poly=");
         input.extend(poly_to_bytes(poly));
         let input = h(input);
-        let mut v = bitvec::vec::BitVec::<bitvec::cursor::LittleEndian, _>::from_slice(&input);
+        let mut v = bitvec::vec::BitVec::<bitvec::order::Lsb0, _>::from_slice(&input);
         match v.len() % 5 {
             0 => (),
             m => v.resize(v.len() + 5 - m, false),

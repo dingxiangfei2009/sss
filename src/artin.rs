@@ -443,8 +443,8 @@ where
                 *f = r;
             }
             f = Polynomial::from(f_);
-            x_pow.mul_pow_x(1);
             {
+                x_pow.mul_pow_x(1);
                 let (_, r) = x_pow.div_with_rem(cyclotomic_poly.clone());
                 x_pow = r;
             }

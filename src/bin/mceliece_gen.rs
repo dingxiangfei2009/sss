@@ -8,7 +8,7 @@ use rand::rngs::OsRng;
 use sss::{
     artin::GF65536NPreparedMultipointEvalVZG,
     galois::{GF65536NTower, GF65536N},
-    goppa::generate,
+    goppa::{generate, BinaryPacked},
 };
 use structopt::StructOpt;
 
@@ -37,12 +37,12 @@ fn main() -> Result<(), Error> {
     write!(
         File::create(opt.pubkey)?,
         "{}",
-        serde_json::to_string(&enc)?
+        serde_json::to_string(&BinaryPacked(enc))?
     )?;
     write!(
         File::create(opt.prikey)?,
         "{}",
-        serde_json::to_string(&dec)?
+        serde_json::to_string(&BinaryPacked(dec))?
     )?;
     Ok(())
 }

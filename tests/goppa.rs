@@ -3,7 +3,7 @@ use sss::{
     artin::GF65536NPreparedMultipointEvalVZG,
     field::F2,
     galois::{GF65536NTower, GF65536N},
-    goppa::{generate, BinaryGoppaDecoder, GoppaDecoder, GoppaEncoder},
+    goppa::{generate, BinaryGoppaDecoder, BinaryPacked, GoppaDecoder, GoppaEncoder},
 };
 
 #[test]
@@ -33,12 +33,13 @@ fn decode_large() {
     let n = 6960;
     let t = 94;
     let u = rand::distributions::uniform::Uniform::from(0..n);
-    let enc: GoppaEncoder<F2, GF65536NTower> =
+    let BinaryPacked(enc): BinaryPacked<GoppaEncoder<F2, GF65536NTower>> =
         serde_json::from_str(include_str!("mc.pub")).unwrap();
-    let dec: GoppaDecoder<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG> =
-        serde_json::from_str(include_str!("mc.pri")).unwrap();
+    let BinaryPacked(dec): BinaryPacked<
+        GoppaDecoder<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG>,
+    > = serde_json::from_str(include_str!("mc.pri")).unwrap();
     let dec = BinaryGoppaDecoder::from_decoder(dec);
-    for _ in 0..8 {
+    for _ in 0..128 {
         let mut x = vec![0; n];
         for _ in 0..t {
             x[u.sample(&mut OsRng)] = 1;
