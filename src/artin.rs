@@ -393,7 +393,7 @@ where
     }
 }
 
-/// Build Artin-Schreier tower, where the initial field extension is defined by the `initial` equation.
+/// [untested] Build Artin-Schreier tower, where the initial field extension is defined by the `initial` equation.
 pub fn build_tower<F>(initial: Polynomial<F>, height: usize) -> Polynomial<F>
 where
     F: PrimeSubfield + Clone,
