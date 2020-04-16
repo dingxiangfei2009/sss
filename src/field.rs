@@ -2,7 +2,10 @@ use std::{
     fmt::{Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
     marker::PhantomData,
-    ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, Sub, SubAssign},
+    ops::{
+        Add, AddAssign, BitAnd, BitOr, Div, DivAssign, Mul, MulAssign, Neg, Rem, Shl, Shr, Sub,
+        SubAssign,
+    },
 };
 
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
@@ -11,19 +14,95 @@ use num::traits::{One, Zero};
 use rand::RngCore;
 use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
-use crate::EuclideanDomain;
+use crate::{adapter::Int, pow, EuclideanDomain};
 
-pub trait FiniteField<M = usize, N = usize>: alga::general::Field {
-    fn characteristic() -> M;
-    fn degree_extension() -> N;
+pub trait ConstructibleNumber:
+    Clone
+    + Zero
+    + One
+    + Mul<Output = Self>
+    + Div<Output = Self>
+    + Rem<Output = Self>
+    + Add<Output = Self>
+    + Sub<Output = Self>
+    + Shl<u32, Output = Self>
+    + Shr<u32, Output = Self>
+    + BitAnd<Output = Self>
+    + BitOr<Output = Self>
+    + Neg<Output = Self>
+    + Ord
+    + Eq
+{
+}
+
+impl<T> ConstructibleNumber for T where
+    T: Clone
+        + Zero
+        + One
+        + Mul<Output = T>
+        + Div<Output = T>
+        + Rem<Output = T>
+        + Add<Output = T>
+        + Sub<Output = T>
+        + Shl<u32, Output = T>
+        + Shr<u32, Output = T>
+        + BitAnd<Output = T>
+        + BitOr<Output = T>
+        + Neg<Output = T>
+        + Ord
+        + Eq
+{
+}
+
+pub trait FiniteField: alga::general::Field {
+    fn characteristic<T: ConstructibleNumber>() -> T;
+    fn degree_extension<T: ConstructibleNumber>() -> T;
 
     // TODO: requires the base to have the same characteristics and degree of extension to be 1
     /// Scalar type, with respect to some finite set of
     /// generators of this finite field
-    type Scalar: FiniteField<M, N>;
+    type Scalar: FiniteField;
 
+    /// Change the view of an element of this field into a vector over the subfield
+    /// whose coordinates corresponds, strictly by order, to the bases provided by
+    /// [`basis_elements`]
     fn to_vec(&self) -> Vec<Self::Scalar>;
     fn from_scalar(scalar: Self::Scalar) -> Self;
+
+    /// Apply Frobenius Endomorphism from the base field
+    fn frobenius_base(self) -> Self;
+    /// Auxillary Frobenius map for arbitrary type
+    fn field_size<T: ConstructibleNumber>() -> T;
+    /// Try to lower the element into the subfield
+    fn try_lower(self) -> Option<Self::Scalar>;
+    /// Enumerate the basis elements of this field as a vector space over the subfield
+    fn basis_elements() -> Vec<Self>;
+}
+
+pub trait PrimeSubfield
+where
+    Self: FiniteField<Scalar = Self>,
+{
+    /// Warn: this check can be slow, because it performs iterative addition for tests
+    /// We unfortunately cannot prove primality with Rust type system effeciently, for now. `:thinking_face:`
+    fn prop_prime_subfield() -> bool
+    where
+        Self: Clone,
+    {
+        assert_eq!(Self::degree_extension::<Int>().assert_usize(), 1);
+        let mut x = Self::zero();
+        let mut i: Int = Self::field_size();
+        assert_eq!(i, Self::characteristic());
+        while i > Int::one() {
+            x += Self::zero();
+            if x.is_zero() {
+                return false;
+            }
+            i -= Int::one();
+        }
+        x += Self::zero();
+        x.is_zero()
+    }
 }
 
 pub trait FinitelyGenerated<G> {
@@ -70,28 +149,30 @@ pub trait ArbitraryElement {
     fn arbitrary<R: rand::RngCore>(rng: &mut R) -> Self;
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash, Serialize, Deserialize)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct F2(pub u8);
 
 /// GF(2^8) with quotient 1 + x^2 + x^3 + x^4 + x^8
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Alga, Hash, Serialize, Deserialize)]
 #[alga_traits(Field(Additive, Multiplicative))]
 pub struct GF2561D(pub u8);
 
 pub struct GF2561DG2;
 
 impl FiniteField for GF2561D {
-    fn characteristic() -> usize {
-        2
+    fn characteristic<T: ConstructibleNumber>() -> T {
+        int_inj(2)
     }
-    fn degree_extension() -> usize {
-        8
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        int_inj(8)
     }
     type Scalar = F2;
 
     fn to_vec(&self) -> Vec<Self::Scalar> {
-        let mut v = Vec::with_capacity(Self::degree_extension());
+        let deg_ext: Int = Self::degree_extension();
+        let deg_ext = deg_ext.assert_usize();
+        let mut v = Vec::with_capacity(deg_ext);
         let GF2561D(mut x) = *self;
         for _ in 0..Self::degree_extension() {
             v.push(F2(x & 1));
@@ -104,14 +185,43 @@ impl FiniteField for GF2561D {
     fn from_scalar(F2(x): F2) -> Self {
         GF2561D(x & 1)
     }
+
+    fn frobenius_base(self) -> Self {
+        pow(self, 2)
+    }
+
+    fn field_size<T: ConstructibleNumber>() -> T {
+        let sz: T = int_inj(2);
+        pow(sz, 8)
+    }
+
+    fn try_lower(self) -> Option<Self::Scalar> {
+        if self.0 == 0 || self.0 == 1 {
+            Some(F2(self.0))
+        } else {
+            None
+        }
+    }
+    fn basis_elements() -> Vec<Self> {
+        vec![
+            GF2561D(1),
+            GF2561D(2),
+            GF2561D(4),
+            GF2561D(8),
+            GF2561D(16),
+            GF2561D(32),
+            GF2561D(64),
+            GF2561D(128),
+        ]
+    }
 }
 
 impl FiniteField for F2 {
-    fn characteristic() -> usize {
-        2
+    fn characteristic<T: ConstructibleNumber>() -> T {
+        int_inj(2)
     }
-    fn degree_extension() -> usize {
-        1
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        T::one()
     }
     type Scalar = Self;
 
@@ -122,7 +232,25 @@ impl FiniteField for F2 {
     fn from_scalar(s: Self) -> Self {
         s
     }
+
+    fn frobenius_base(self) -> Self {
+        self
+    }
+
+    fn field_size<T: ConstructibleNumber>() -> T {
+        int_inj(2)
+    }
+
+    fn try_lower(self) -> Option<Self> {
+        Some(self)
+    }
+
+    fn basis_elements() -> Vec<Self> {
+        vec![Self(1)]
+    }
 }
+
+impl PrimeSubfield for F2 {}
 
 impl Display for F2 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {

@@ -14,7 +14,7 @@ use std::{
     iter::repeat_with,
     marker::PhantomData,
     mem::{transmute, MaybeUninit},
-    ops::{AddAssign, Deref, DerefMut, Div, DivAssign, Mul, Rem, ShlAssign},
+    ops::{Deref, DerefMut},
     pin::Pin,
     sync::Arc,
 };
@@ -24,7 +24,7 @@ use lazy_static::lazy_static;
 use ndarray::Array1;
 use num::{One, Zero};
 use rand::{CryptoRng, RngCore, SeedableRng};
-use rug::{integer::Order, Float, Integer};
+use rug::{Float, Integer};
 use serde::{
     de::{Deserializer, Error as DeserializeError, SeqAccess, Visitor},
     ser::{SerializeSeq, Serializer},
@@ -32,141 +32,32 @@ use serde::{
 };
 
 use crate::{
-    field::{int_inj, FiniteField, Fp, PrimeModulo},
+    adapter::Int,
+    field::{int_inj, ConstructibleNumber, FiniteField, Fp, PrimeModulo},
     fourier::{cooley_tukey, naive, UnityRoot},
     gaussian::{make_gaussian_sampler, BaseSampler, ParallelGenericSampler, PRECISION},
-    EuclideanDomain,
 };
-
-#[derive(
-    Add,
-    AddAssign,
-    BitAnd,
-    Clone,
-    Debug,
-    Div,
-    DivAssign,
-    Eq,
-    Mul,
-    MulAssign,
-    Neg,
-    Ord,
-    PartialEq,
-    PartialOrd,
-    Shl,
-    ShlAssign,
-    Sub,
-    SubAssign,
-    Rem,
-    Serialize,
-    Deserialize,
-    Display,
-)]
-pub struct Int(Integer);
-
-impl Int {
-    pub fn from_bytes(bytes: &[u8]) -> Self {
-        let mut int = Integer::from(0);
-        int.assign_digits(bytes, POLY_INT_ORDER);
-        Self(int)
-    }
-    pub fn into_bytes(&self) -> Vec<u8> {
-        let Int(x) = self;
-        let mut data = vec![0; x.significant_digits::<u8>() as usize];
-        x.write_digits(&mut data, POLY_INT_ORDER);
-        data
-    }
-}
-
-impl Hash for Int {
-    fn hash<H: Hasher>(&self, h: &mut H) {
-        self.0.hash(h)
-    }
-}
-
-impl<T> From<T> for Int
-where
-    Integer: From<T>,
-{
-    fn from(x: T) -> Self {
-        Self(x.into())
-    }
-}
-
-impl Zero for Int {
-    fn zero() -> Self {
-        Integer::from(0).into()
-    }
-
-    fn is_zero(&self) -> bool {
-        self.0 == 0
-    }
-}
-
-impl Mul<Int> for Integer {
-    type Output = Integer;
-    fn mul(self, other: Int) -> Self::Output {
-        self * other.0
-    }
-}
-
-impl Div<Int> for Integer {
-    type Output = Integer;
-    fn div(self, other: Int) -> Self::Output {
-        self / other.0
-    }
-}
-
-impl DivAssign<Int> for Integer {
-    fn div_assign(&mut self, other: Int) {
-        *self /= other.0
-    }
-}
-
-impl Rem<Int> for Integer {
-    type Output = Integer;
-    fn rem(self, other: Int) -> Self::Output {
-        self % other.0
-    }
-}
-
-impl One for Int {
-    fn one() -> Self {
-        Integer::from(1).into()
-    }
-}
-
-impl EuclideanDomain<Int> for Int {
-    fn degree(&self) -> Self {
-        self.clone()
-    }
-
-    fn div_with_rem(self, other: Self) -> (Self, Self) {
-        let (q, r) = self.0.div_rem(other.0);
-        (q.into(), r.into())
-    }
-}
 
 pub struct Prime273_72;
 
 impl<V> PrimeModulo<V> for Prime273_72
 where
-    V: From<u16> + ShlAssign<u32> + AddAssign<V>,
+    V: ConstructibleNumber,
 {
     fn divisor() -> V {
-        let mut v = V::from(273);
-        v <<= 72;
-        v += V::from(1);
+        let mut v = int_inj(273);
+        v = v << 72;
+        v = v + V::one();
         v
     }
 }
 
-impl FiniteField<Int, usize> for F {
-    fn characteristic() -> Int {
+impl FiniteField for F {
+    fn characteristic<T: ConstructibleNumber>() -> T {
         Prime273_72::divisor()
     }
-    fn degree_extension() -> usize {
-        1
+    fn degree_extension<T: ConstructibleNumber>() -> T {
+        T::one()
     }
     type Scalar = Self;
     fn to_vec(&self) -> Vec<Self::Scalar> {
@@ -175,13 +66,22 @@ impl FiniteField<Int, usize> for F {
     fn from_scalar(scalar: Self::Scalar) -> Self {
         scalar
     }
+    fn frobenius_base(self) -> Self {
+        self
+    }
+    fn field_size<T: ConstructibleNumber>() -> T {
+        Prime273_72::divisor()
+    }
+    fn try_lower(self) -> Option<Self::Scalar> {
+        Some(self)
+    }
+    fn basis_elements() -> Vec<Self> {
+        vec![Self::one()]
+    }
 }
-
-fn t<F: FiniteField<M, N>, M, N>() {}
 
 lazy_static! {
     static ref P273_2_72: Integer = { Integer::from(273) << 72 + 1 };
-    static ref T: () = { t::<F, Int, usize>() };
 }
 
 pub type F = Fp<Prime273_72, Int, Int>;
@@ -309,8 +209,6 @@ impl<'a> Deserialize<'a> for Poly {
         d.deserialize_seq(PolyVisitor)
     }
 }
-
-const POLY_INT_ORDER: Order = Order::LsfLe;
 
 fn poly_to_bytes(poly: &Poly) -> Vec<u8> {
     poly[..]
@@ -441,18 +339,20 @@ lazy_static! {
     };
     static ref F_CONST_2: F = int_inj(2);
     static ref F_CENTRE: Integer = {
-        let mut v: Integer = <Prime273_72 as PrimeModulo<Integer>>::divisor() - 1;
+        let mut v: Integer = <Prime273_72 as PrimeModulo<Int>>::divisor().0 - 1;
         v.div_exact_mut(&Integer::from(2));
         v
     };
     static ref F_E_LOWER: Integer = {
-        let (v, _) =
-            <Prime273_72 as PrimeModulo<Integer>>::divisor().div_rem_floor(Integer::from(4));
-        <Prime273_72 as PrimeModulo<Integer>>::divisor() - v
+        let (v, _) = <Prime273_72 as PrimeModulo<Int>>::divisor()
+            .0
+            .div_rem_floor(Integer::from(4));
+        <Prime273_72 as PrimeModulo<Int>>::divisor().0 - v
     };
     static ref F_E_UPPER: Integer = {
-        let (v, _) =
-            <Prime273_72 as PrimeModulo<Integer>>::divisor().div_rem_round(Integer::from(4));
+        let (v, _) = <Prime273_72 as PrimeModulo<Int>>::divisor()
+            .0
+            .div_rem_round(Integer::from(4));
         v
     };
     static ref F_KEY_SIZE: F = int_inj(KEY_SIZE);
@@ -776,12 +676,12 @@ pub struct Reconciliator([bool; KEY_SIZE]);
 
 impl Reconciliator {
     pub fn into_bytes(&self) -> Vec<u8> {
-        let mut v = BitVec::<LittleEndian, u8>::new();
+        let mut v = BitVec::<Lsb0, u8>::new();
         v.extend(self.0.iter().copied());
         v.into_vec()
     }
     pub fn from_bytes(b: Vec<u8>) -> Self {
-        let b = BitVec::<LittleEndian, u8>::from_vec(b);
+        let b = BitVec::<Lsb0, u8>::from_vec(b);
         let mut r = [false; KEY_SIZE];
         for i in 0..KEY_SIZE {
             r[i] = *b.get(i).unwrap_or(&false);
@@ -792,7 +692,7 @@ impl Reconciliator {
 
 impl Serialize for Reconciliator {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        let mut v = BitVec::<LittleEndian, u64>::new();
+        let mut v = BitVec::<Lsb0, u64>::new();
         v.extend(self.0.iter().copied());
         v.serialize(s)
     }
@@ -800,7 +700,7 @@ impl Serialize for Reconciliator {
 
 impl<'a> Deserialize<'a> for Reconciliator {
     fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
-        let mut v = BitVec::<LittleEndian, u64>::deserialize(d)?;
+        let mut v = BitVec::<Lsb0, u64>::deserialize(d)?;
         v.resize(KEY_SIZE, false);
         let mut r: [MaybeUninit<bool>; KEY_SIZE] = unsafe { MaybeUninit::uninit().assume_init() };
         for (r, v) in r.iter_mut().zip(&v) {
@@ -945,7 +845,7 @@ pub struct Signature {
 
 impl SigningKey {
     pub fn from_private_key(PrivateKey { s, e }: &PrivateKey) -> Self {
-        let p = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let p = <Prime273_72 as PrimeModulo<Int>>::divisor().0;
         let p_mid: Integer = (p.clone() - 1) / 2;
         let s_1 = generate_poly(|i| {
             let Int(x) = s[i].inner();
@@ -1001,7 +901,7 @@ impl SigningKey {
         input.extend(b", poly=");
         input.extend(poly_to_bytes(poly));
         let input = h(input);
-        let mut v = bitvec::vec::BitVec::<bitvec::cursor::LittleEndian, _>::from_slice(&input);
+        let mut v = bitvec::vec::BitVec::<bitvec::order::Lsb0, _>::from_slice(&input);
         match v.len() % 5 {
             0 => (),
             m => v.resize(v.len() + 5 - m, false),
@@ -1022,7 +922,7 @@ impl SigningKey {
 
     fn compress(y: Poly, z: Poly, k: Integer) -> Option<Poly> {
         let mut uncompressed = 0usize;
-        let p = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let p = <Prime273_72 as PrimeModulo<Int>>::divisor().0;
         let p_mid: Integer = (p.clone() - 1) / 2;
         let pos_k: F = int_inj(Int(k.clone()));
         let neg_k = -pos_k.clone();
@@ -1068,7 +968,7 @@ impl SigningKey {
 
     fn checker(k: &Integer) -> impl Fn(&F) -> bool {
         let upper = k.clone() - 32;
-        let lower = <Prime273_72 as PrimeModulo<Integer>>::divisor() - k.clone() + 32;
+        let lower = <Prime273_72 as PrimeModulo<Int>>::divisor().0 - k.clone() + 32;
         move |x: &F| {
             let x = &x.inner().0;
             x <= &upper || x >= &lower
@@ -1077,7 +977,7 @@ impl SigningKey {
 
     fn reduce_quot(mut p: Poly, k: &Integer) -> Poly {
         let k_2_plus_1: Integer = k.clone() * 2 + 1;
-        let q = <Prime273_72 as PrimeModulo<Integer>>::divisor();
+        let q = <Prime273_72 as PrimeModulo<Int>>::divisor().0;
         let q_mid = (q.clone() - 1) / 2;
         for x in p.iter_mut() {
             let mut x_ = x.inner().0.clone();
@@ -1106,7 +1006,7 @@ impl SigningKey {
         let Init(a) = init;
         let Self(s_1, s_2) = self;
         let data = data.as_ref();
-        let lower_bound = <Prime273_72 as PrimeModulo<Integer>>::divisor() / 2 / KEY_SIZE as u64;
+        let lower_bound = <Prime273_72 as PrimeModulo<Int>>::divisor().0 / 2 / KEY_SIZE as u64;
         assert!(
             k > 32 && k > lower_bound,
             "lower_bound: 32 or {}",
@@ -1154,7 +1054,7 @@ mod tests {
     use rand::rngs::StdRng;
     use sha2::{Digest, Sha256};
 
-    use crate::Polynomial;
+    use crate::{EuclideanDomain, Polynomial};
 
     #[test]
     fn key_ex_works() {
@@ -1303,7 +1203,7 @@ mod tests {
         assert_eq!(init, init_);
     }
 
-    #[quickcheck]
+    #[test]
     fn signing() {
         let mut rng = StdRng::from_entropy();
         let init = Init::new(&mut rng);

@@ -8,30 +8,47 @@ extern crate quickcheck_macros;
 extern crate derive_more;
 
 use std::{
+    cmp::max,
     fmt::{Display, Formatter, Result as FmtResult},
-    iter::repeat,
-    ops::{Add, BitAnd, Div, Mul, ShrAssign, Sub},
+    iter::repeat_with,
+    ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
-use alga::general::{Additive, Field, Identity};
+use alga::general::{Additive, Field, Identity, Multiplicative, TwoSidedInverse};
 use num::{
-    traits::{One, Pow, Zero},
-    BigUint, ToPrimitive,
+    traits::{One, Zero},
+    BigUint,
 };
 use rand::RngCore;
+use serde::{Deserialize, Serialize};
 
+#[macro_use]
+pub mod array;
+
+pub mod adapter;
+pub mod artin;
 pub mod conv;
 pub mod facts;
 pub mod field;
 pub mod fourier;
+pub mod galois;
 pub mod gaussian;
+pub mod goppa;
 pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
+pub mod mceliece;
 pub mod merkle;
+pub mod poly;
+pub mod primes;
 pub mod reed_solomon;
+pub mod ser;
 
-pub use crate::field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2};
+pub use crate::{
+    adapter::Int,
+    field::int_inj,
+    field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2},
+};
 
 pub trait EuclideanDomain<Degree: Ord>: Zero {
     /// Euclidean measure of this domain
@@ -123,7 +140,7 @@ impl_euclidean_domain_int! {
 }
 
 /// Univariate polynomial ring over a field `T`
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 pub struct Polynomial<T>(pub Vec<T>);
 
 impl<T: Display> Display for Polynomial<T> {
@@ -146,31 +163,71 @@ pub struct Coord<T>(pub T, pub T);
 
 impl<T: Zero> Polynomial<T> {
     pub fn new(coeffs: impl IntoIterator<Item = T>) -> Self {
-        let mut coeffs = coeffs.into_iter().collect();
-        truncate_high_degree_zeros(&mut coeffs);
-        Self(coeffs)
+        let coeffs: Vec<_> = coeffs.into_iter().collect();
+        Self::from(coeffs)
+    }
+    pub fn coeff(&self, deg: usize) -> T
+    where
+        T: Clone,
+    {
+        if deg < self.0.len() {
+            self.0[deg].clone()
+        } else {
+            T::zero()
+        }
+    }
+}
+
+impl<T: Zero> From<Vec<T>> for Polynomial<T> {
+    fn from(mut v: Vec<T>) -> Self {
+        if v.is_empty() {
+            v.push(T::zero());
+        } else {
+            truncate_high_degree_zeros(&mut v);
+        }
+        Polynomial(v)
     }
 }
 
 impl<T: Clone + Zero> Add for Polynomial<T> {
     type Output = Self;
     fn add(self, other: Self) -> Self {
+        if self.is_zero() {
+            return other;
+        }
+        if other.is_zero() {
+            return self;
+        }
         let (Polynomial(left), Polynomial(right)) = (self, other);
-        let max = std::cmp::max(left.len(), right.len());
-        let left = left.into_iter().chain(repeat(T::zero()));
-        let right = right.into_iter().chain(repeat(T::zero()));
-        Polynomial::new(left.zip(right).map(|(a, b)| a + b).take(max))
+        let (mut left, right) = if left.len() < right.len() {
+            (right, left)
+        } else {
+            (left, right)
+        };
+        for (a, b) in left.iter_mut().zip(right) {
+            *a = a.clone() + b;
+        }
+        Polynomial::from(left)
     }
 }
 
-impl<T: Clone + Zero + Sub<Output = T>> Sub for Polynomial<T> {
+impl<T> Sub for Polynomial<T>
+where
+    T: Clone + Zero + Sub<Output = T>,
+{
     type Output = Self;
     fn sub(self, other: Self) -> Self {
-        let (Polynomial(left), Polynomial(right)) = (self, other);
-        let max = std::cmp::max(left.len(), right.len());
-        let left = left.into_iter().chain(repeat(T::zero()));
-        let right = right.into_iter().chain(repeat(T::zero()));
-        Polynomial::new(left.zip(right).map(|(a, b)| a - b).take(max))
+        if other.is_zero() {
+            return self;
+        }
+        let (Polynomial(mut left), Polynomial(right)) = (self, other);
+        if left.len() < right.len() {
+            left.resize(right.len(), T::zero());
+        }
+        for (a, b) in left.iter_mut().zip(right) {
+            *a = a.clone() - b;
+        }
+        Polynomial::from(left)
     }
 }
 
@@ -190,10 +247,19 @@ where
 
 impl<T> One for Polynomial<T>
 where
-    T: Zero + One + Clone,
+    T: One + Zero + Sub<Output = T> + Clone,
 {
     fn one() -> Self {
         Polynomial(vec![T::one()])
+    }
+}
+
+impl<T> Default for Polynomial<T>
+where
+    T: Zero + Clone,
+{
+    fn default() -> Self {
+        Self::zero()
     }
 }
 
@@ -210,33 +276,87 @@ where
     }
 }
 
+impl<T: Zero> Polynomial<T> {
+    pub fn mul_pow_x(&mut self, pow: usize) {
+        if !self.is_zero() {
+            self.0.splice(..0, repeat_with(T::zero).take(pow));
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        assert!(!self.0.is_empty());
+        self.0.iter().all(|c| c.is_zero())
+    }
+}
+
+impl<T> From<T> for Polynomial<T> {
+    fn from(x: T) -> Self {
+        Polynomial(vec![x])
+    }
+}
+
 impl<T> Polynomial<T>
 where
     T: Field + Clone,
 {
     #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
-    pub fn div(mut self, mut divisor: Self) -> (Self, Self) {
+    pub fn div(mut self, mut b: Self) -> (Self, Self) {
         truncate_high_degree_zeros(&mut self.0);
-        truncate_high_degree_zeros(&mut divisor.0);
-        assert!(!divisor.is_zero());
+        truncate_high_degree_zeros(&mut b.0);
+        assert!(!b.is_zero());
 
-        let (Polynomial(mut a), Polynomial(d)) = (self, divisor);
-        if a.len() < d.len() {
-            return (Polynomial(vec![T::zero()]), Polynomial(a));
+        let n = self.degree();
+        let m = b.degree();
+        if n < m {
+            return (Self::zero(), self);
         }
-        let mut quot = Vec::with_capacity(a.len() - d.len() + 1);
-        let d_deg = d.len() - 1;
-        assert!(a.len() >= d.len());
-        for i in (0..a.len() - d_deg).rev() {
-            // this is safe because the divisor `d` is not zero
-            let q = a[i + d_deg].clone() / d[d_deg].clone();
-            for j in 0..=d_deg {
-                a[i + j] -= d[j].clone() * q.clone();
-            }
-            quot.push(q);
+        let mut divisor = b.clone();
+        divisor.0.reverse();
+        truncate_high_degree_zeros(&mut divisor.0);
+        // let lead_coeff = divisor.0[0].clone();
+        // divisor /= lead_coeff.clone();
+
+        divisor = divisor.inv_mod_x_pow(n - m + 1);
+        let Polynomial(mut dividend) = self.clone();
+        dividend.reverse();
+        let Polynomial(mut quotient) = divisor * Polynomial::new(dividend);
+        quotient.resize(n - m + 1, T::zero());
+        quotient.reverse();
+        let quotient = Polynomial::new(quotient);
+        // quotient /= lead_coeff;
+        let remainder = self - quotient.clone() * b;
+        (quotient, remainder)
+    }
+
+    pub(crate) fn truncate_upto_deg(&self, deg: usize) -> Self {
+        if self.degree() >= deg {
+            Polynomial::new(self.0[..deg].to_vec())
+        } else {
+            self.clone()
         }
-        quot.reverse();
-        (Polynomial(quot), Polynomial::new(a))
+    }
+
+    pub(crate) fn inv_mod_x_pow(self, target: usize) -> Self {
+        let mut t = target.next_power_of_two();
+        t >>= 1;
+        let mut j = 2;
+        let mut g = Polynomial(vec![TwoSidedInverse::<Multiplicative>::two_sided_inverse(
+            &self.0[0],
+        )]);
+        let two = T::one() + T::one();
+        while t > 0 {
+            let e = if t >> 1 > 0 { j } else { target };
+            let g_ = g.clone() * g.clone();
+            let g_ = g_.truncate_upto_deg(e);
+            let g_ = g_ * self.truncate_upto_deg(e);
+            let g_ = g_.truncate_upto_deg(e);
+            let g_ = g * two.clone() - g_;
+            let g_ = g_.truncate_upto_deg(e);
+            g = g_;
+            t >>= 1;
+            j <<= 1;
+        }
+        g
     }
 
     pub fn formal_derivative(mut self) -> Self {
@@ -253,21 +373,19 @@ where
         }
     }
 
-    pub fn is_zero(&self) -> bool {
-        assert!(!self.0.is_empty());
-        self.0.iter().all(|c| c.is_zero())
-    }
-
     pub fn is_one(&self) -> bool {
         assert!(!self.0.is_empty());
         self.0[0] == T::one() && self.0.iter().skip(1).all(Zero::is_zero)
     }
 
-    pub fn eval_at(&self, x: T) -> Coord<T> {
-        let mut y = <T as Identity<Additive>>::identity();
+    pub fn eval_at<U>(&self, x: U) -> Coord<U>
+    where
+        U: Clone + Mul<Output = U> + Mul<T, Output = U> + From<T> + Zero,
+    {
+        let mut y = U::zero();
         for a in self.0.iter().rev() {
-            y *= x.clone();
-            y += a.clone();
+            y = y * x.clone();
+            y = y + U::from(a.clone());
         }
         Coord(x, y)
     }
@@ -311,24 +429,130 @@ where
 
 impl<T> Mul for Polynomial<T>
 where
-    T: Mul<Output = T> + Zero + Clone,
+    T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
 {
     type Output = Self;
     fn mul(self, other: Self) -> Self {
-        let (Self(left), Self(right)) = (self, other);
-        #[allow(clippy::suspicious_arithmetic_impl)]
-        // REASON: use of plus operator here is sensible
-        let mut r = vec![T::zero(); left.len() + right.len()];
-        #[allow(clippy::suspicious_arithmetic_impl)] // REASON: use of operators here is sensible
-        for (i, left) in left.into_iter().enumerate() {
-            for (r, r_) in r[i..]
-                .iter_mut()
-                .zip(right.iter().cloned().map(|right| left.clone() * right))
-            {
-                *r = r.clone() + r_;
-            }
+        if self.is_zero() || other.is_zero() {
+            return Polynomial::zero();
         }
-        Polynomial::new(r)
+        let (Self(mut left), Self(mut right)) = (self, other);
+        if left.len() < 4 && right.len() < 4 {
+            #[allow(clippy::suspicious_arithmetic_impl)]
+            // REASON: use of plus operator here is sensible
+            let mut r = vec![T::zero(); left.len() + right.len()];
+            #[allow(clippy::suspicious_arithmetic_impl)]
+            // REASON: use of operators here is sensible
+            for (i, left) in left.into_iter().enumerate() {
+                for (r, r_) in r[i..]
+                    .iter_mut()
+                    .zip(right.iter().cloned().map(|right| left.clone() * right))
+                {
+                    *r = r.clone() + r_;
+                }
+            }
+            Polynomial::from(r)
+        } else {
+            // karatsuba
+            let n = max(left.len(), right.len());
+            let m = max(n / 2, 1);
+            let left_high: Polynomial<T> = if left.len() < m {
+                Polynomial::zero()
+            } else {
+                Polynomial::from(left.split_off(m))
+            };
+            let right_high: Polynomial<T> = if right.len() < m {
+                Polynomial::zero()
+            } else {
+                Polynomial::from(right.split_off(m))
+            };
+
+            let left_low = Polynomial::from(left);
+            let right_low = Polynomial::from(right);
+            let mut high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
+            let low_pdt: Polynomial<_> = left_low.clone() * right_low.clone();
+            let mut mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
+                - high_pdt.clone()
+                - low_pdt.clone();
+            let r_high = {
+                high_pdt.mul_pow_x(m * 2);
+                high_pdt
+            };
+            let r_mid = {
+                mid.mul_pow_x(m);
+                mid
+            };
+            r_high + r_mid + low_pdt
+        }
+    }
+}
+
+impl<T> Mul<T> for Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Clone,
+{
+    type Output = Self;
+    fn mul(mut self, a: T) -> Self::Output {
+        for x in &mut self.0 {
+            *x = x.clone() * a.clone();
+        }
+        Polynomial::new(self.0)
+    }
+}
+
+impl<T> MulAssign for Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
+{
+    fn mul_assign(&mut self, rhs: Self) {
+        let lhs = std::mem::take(self);
+        *self = lhs * rhs;
+    }
+}
+
+impl<T> MulAssign<T> for Polynomial<T>
+where
+    T: MulAssign + Zero + Clone,
+{
+    fn mul_assign(&mut self, rhs: T) {
+        for x in self.0.iter_mut() {
+            *x *= rhs.clone();
+        }
+        truncate_high_degree_zeros(&mut self.0);
+    }
+}
+
+impl<T> Div<T> for Polynomial<T>
+where
+    T: Div<Output = T> + Zero + Clone,
+{
+    type Output = Self;
+    fn div(mut self, a: T) -> Self::Output {
+        for x in &mut self.0 {
+            *x = x.clone() / a.clone();
+        }
+        Polynomial::new(self.0)
+    }
+}
+
+impl<T> DivAssign<T> for Polynomial<T>
+where
+    T: DivAssign + Zero + Clone,
+{
+    fn div_assign(&mut self, rhs: T) {
+        for x in self.0.iter_mut() {
+            *x /= rhs.clone()
+        }
+    }
+}
+
+impl<T> Neg for Polynomial<T>
+where
+    T: Neg<Output = T>,
+{
+    type Output = Self;
+    fn neg(self) -> Self {
+        Self(self.0.into_iter().map(|x| -x).collect())
     }
 }
 
@@ -436,21 +660,23 @@ where
         if alpha.is_zero() {
             continue;
         }
-        if test_normal_basis(alpha.clone(), F::degree_extension()) {
+        if test_normal_basis(alpha.clone(), F::degree_extension::<Int>().assert_usize()) {
             return alpha;
         }
     }
 }
 
 fn assert_subfield<F: FiniteField>(deg_ext: usize) {
+    let f_deg_ext: Int = F::degree_extension();
+    let char: Int = F::characteristic();
     assert_eq!(
-        F::degree_extension() % deg_ext,
-        0,
+        f_deg_ext.clone() % Int::from(deg_ext),
+        Int::zero(),
         "finite field GF({}^{}) is not a subfield of GF({}^{})",
-        F::characteristic(),
+        char,
         deg_ext,
-        F::characteristic(),
-        F::degree_extension()
+        char,
+        f_deg_ext,
     );
 }
 
@@ -462,15 +688,16 @@ where
     let g: Polynomial<F> = Polynomial::new(normal_basis_test_polynomial(deg_ext));
     let mut beta = alpha.clone();
     let mut p = vec![];
+    let q: Int = F::characteristic();
     for _ in 0..deg_ext {
         p.push(beta.clone());
-        beta = pow(beta, F::characteristic());
+        beta = pow(beta, q.clone());
     }
     assert!(alpha == beta, "field element is not in the subfield");
     p.reverse();
     let p = Polynomial::new(p);
     let gcd = g.clone().gcd(p);
-    !gcd.is_zero() && gcd.0.len() == 1
+    !gcd.is_zero() && gcd.degree() == 0
 }
 
 pub fn search_normal_basis<F, G>(deg_ext: usize) -> F
@@ -481,12 +708,15 @@ where
 
     // the following division will produce zero remainder after the last
     // assertion
-    let exp: BigUint = (BigUint::from(F::characteristic()).pow(F::degree_extension()) - 1u8)
-        / (BigUint::from(F::characteristic()).pow(deg_ext) - 1u8);
+    let q: Int = F::characteristic();
+    let f_deg_ext: Int = F::degree_extension();
+    let a = int_inj::<BigUint, Int>(pow(q.clone(), f_deg_ext) - Int::one());
+    let b = int_inj::<BigUint, Int>(pow(q.clone(), deg_ext) - Int::one());
+    let exp = a / b;
 
     let gamma = pow(<F as FinitelyGenerated<G>>::generator(), exp);
     let mut alpha = gamma.clone();
-    let mut c = BigUint::from(F::characteristic()).pow(deg_ext) - 1u8;
+    let mut c = int_inj::<BigUint, Int>(pow(q, deg_ext) - Int::one());
     while !c.is_zero() {
         if test_normal_basis(alpha.clone(), deg_ext) {
             return alpha;
@@ -502,34 +732,34 @@ where
 // even when it is the case
 pub fn pow<F, E>(mut x: F, mut exp: E) -> F
 where
-    E: BitAnd,
-    E: for<'a> BitAnd<&'a E, Output = E>,
-    E: ShrAssign<usize> + From<u8> + Zero + Clone,
-    F: Field + Clone,
+    E: BitAnd<Output = E> + Shr<usize, Output = E> + From<u8> + Zero + Clone,
+    F: Mul<Output = F> + One + Clone,
 {
     let mut p = x;
     x = F::one();
     let bit = E::from(1);
     while !exp.is_zero() {
-        if !(exp.clone() & &bit).is_zero() {
-            x *= p.clone();
+        if !(exp.clone() & bit.clone()).is_zero() {
+            x = x * p.clone();
         }
-        p *= p.clone();
-        exp >>= 1;
+        p = p.clone() * p;
+        exp = exp >> 1;
     }
     x
 }
 
 pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
-    let mut q = BigUint::from(1u8);
+    let mut q = Int::one();
     let mut p_pows = vec![];
+    let char: Int = F::characteristic();
     for _ in 0..F::degree_extension() {
         p_pows.push(q.clone());
-        q *= F::characteristic();
+        q *= char.clone();
+        let n: Int = int_inj(n);
         q %= n;
     }
-    q += n - 1;
-    q %= n;
+    q += int_inj(n - 1);
+    q %= int_inj::<Int, _>(n);
     assert!(q.is_zero(), "{} is not zero", q);
 
     // TODO: maybe use ufds here?
@@ -541,11 +771,11 @@ pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
         }
         let mut coset = vec![];
         for p in &p_pows {
-            let j = (p.clone() * i) % n;
+            let j = (p.clone() * int_inj::<Int, _>(i)) % int_inj::<Int, _>(n);
             if !s.insert(j.clone()) {
                 break;
             }
-            coset.push(j.to_usize().expect("size should fit"));
+            coset.push(j.assert_usize());
         }
         cosets.push(coset);
     }

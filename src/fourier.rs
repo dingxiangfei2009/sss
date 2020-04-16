@@ -10,6 +10,7 @@ use ndarray::{Array1, Array2, ArrayViewMut, Axis};
 use num::traits::{One, Zero};
 
 use crate::{
+    adapter::Int,
     conv::{BilinearAlgorithm, LinearOperator, ToeplitzConv},
     field::{int_inj, FiniteField, FinitelyGenerated, F2, GF2561D, GF2561DG2},
     linalg::mat_vec_mul,
@@ -101,7 +102,7 @@ where
 /// Fourier Transform by definition
 pub fn naive<F>(root: UnityRoot<F>) -> impl Fn(Vec<F>) -> Vec<F>
 where
-    F: Field + Clone + Send + Sync,
+    F: Field + Clone + Sync,
 {
     move |x: Vec<F>| {
         let n = x.len();
@@ -140,7 +141,7 @@ where
     F: 'static + FiniteField + Clone + Send + Sync,
     BA: BilinearAlgorithm<F>,
 {
-    let p = F::characteristic();
+    let p: Int = F::characteristic();
     assert_eq!(cyclotomic_cosets.len(), conv_bilinear_algos.len());
     assert_eq!(cyclotomic_cosets.len(), normal_basis.len());
     let convs: Vec<_> = conv_bilinear_algos
@@ -152,7 +153,7 @@ where
             let mut gamma = basis.clone();
             for _ in 0..size {
                 x.push(gamma.clone());
-                gamma = pow(gamma, p);
+                gamma = pow(gamma, p.clone());
             }
             algo.apply(&x)
         })
@@ -464,7 +465,7 @@ mod tests {
                     .collect();
                 system.extend(gamma);
                 let solution = solve(
-                    Array2::from_shape_vec((subfield_deg_ext + 1, F::degree_extension()), system)
+                    Array2::from_shape_vec((subfield_deg_ext + 1, F::degree_extension::<Int>().assert_usize()), system)
                         .expect("shape should be correct")
                         .t()
                         .to_owned(),

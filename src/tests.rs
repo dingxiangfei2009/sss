@@ -34,8 +34,47 @@ use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedI
 use alga_derive::Alga;
 use approx::{AbsDiffEq, RelativeEq};
 use num::{rational::BigRational, BigInt, One};
-use quickcheck::{Arbitrary, Gen};
+use quickcheck::{Arbitrary, Gen, TestResult};
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+
+fn naive_poly_div_with_rem<T>(
+    mut a: Polynomial<T>,
+    mut b: Polynomial<T>,
+) -> (Polynomial<T>, Polynomial<T>)
+where
+    T: Field + Clone,
+{
+    truncate_high_degree_zeros(&mut a.0);
+    truncate_high_degree_zeros(&mut b.0);
+    assert!(!b.is_zero());
+
+    let (Polynomial(mut a), Polynomial(d)) = (a, b);
+    if a.len() < d.len() {
+        return (Polynomial(vec![T::zero()]), Polynomial(a));
+    }
+    let mut quot = Vec::with_capacity(a.len() - d.len() + 1);
+    let d_deg = d.len() - 1;
+    assert!(a.len() >= d.len());
+    for i in (0..a.len() - d_deg).rev() {
+        // this is safe because the divisor `d` is not zero
+        let q = a[i + d_deg].clone() / d[d_deg].clone();
+        for j in 0..=d_deg {
+            a[i + j] -= d[j].clone() * q.clone();
+        }
+        quot.push(q);
+    }
+    quot.reverse();
+    (Polynomial(quot), Polynomial::new(a))
+}
+
+impl<T> Arbitrary for Polynomial<T>
+where
+    T: Zero + Arbitrary,
+{
+    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        Polynomial::new(<Vec<T> as Arbitrary>::arbitrary(g))
+    }
+}
 
 #[derive(Copy, Clone, Debug, Display, Alga, PartialEq, Eq)]
 #[alga_traits(Field(Additive, Multiplicative))]
@@ -385,8 +424,8 @@ fn gf2561d_normal_basis() {
 #[test]
 fn gf2561d_gamma_is_normal_basis() {
     let gamma = GF2561D_NORMAL_BASIS;
-    let mut g = vec![GF2561D::zero(); GF2561D::degree_extension() + 1];
-    g[GF2561D::degree_extension()] = GF2561D::one() / GF2561D(0b00010011);
+    let mut g = vec![GF2561D::zero(); GF2561D::degree_extension::<Int>().assert_usize() + 1];
+    g[GF2561D::degree_extension::<Int>().assert_usize()] = GF2561D::one() / GF2561D(0b00010011);
     g[0] -= GF2561D::one() / GF2561D(0b00010011);
     let g = Polynomial::new(g);
 
@@ -394,7 +433,7 @@ fn gf2561d_gamma_is_normal_basis() {
     let mut p = vec![];
     for _ in 0..GF2561D::degree_extension() {
         p.push(beta.clone());
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     p.reverse();
     let p = Polynomial::new(p);
@@ -459,7 +498,7 @@ fn gf2561d_normal_basis_conversion(gamma: GF2561D, deg_ext: usize) {
         let mut basis = vec![];
         for _ in 0..deg_ext {
             basis.push(gamma);
-            gamma = pow(gamma, GF2561D::characteristic());
+            gamma = pow(gamma, GF2561D::characteristic::<Int>().assert_usize());
         }
         basis
     };
@@ -492,7 +531,7 @@ fn gf2561d_normal_basis_conversion(gamma: GF2561D, deg_ext: usize) {
 fn gf2561d_gamma_normal_basis_has_conversion() {
     gf2561d_normal_basis_conversion(
         crate::field::GF2561D_NORMAL_BASIS,
-        GF2561D::degree_extension(),
+        GF2561D::degree_extension::<Int>().assert_usize(),
     );
 }
 
@@ -574,7 +613,7 @@ fn gf2561d_subfield_16_normal_basis() {
     let mut beta = gamma;
     for _ in 0..subfield_deg_ext {
         print!("{} ", beta);
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     println!();
     assert_eq!(beta, gamma);
@@ -589,7 +628,7 @@ fn gf2561d_subfield_4_normal_basis() {
     let mut beta = gamma;
     for _ in 0..subfield_deg_ext {
         print!("{} ", beta);
-        beta = pow(beta, GF2561D::characteristic());
+        beta = pow(beta, GF2561D::characteristic::<Int>().assert_usize());
     }
     println!();
     assert_eq!(beta, gamma);
@@ -603,4 +642,34 @@ fn usize_euclid() {
     assert_eq!(s, R(-9));
     assert_eq!(t, R(47));
     assert_eq!(r, 2);
+}
+
+#[quickcheck]
+fn poly_div(a: Polynomial<Frac>, b: Polynomial<Frac>) -> TestResult {
+    if b.is_zero() || a.degree() < b.degree() {
+        return TestResult::discard();
+    }
+    let s = a.clone();
+    let t = b.clone();
+    let (expected_q, expected_r) = naive_poly_div_with_rem(a, b);
+    let (actual_q, actual_r) = s.div_with_rem(t);
+    assert_eq!(actual_q, expected_q);
+    assert_eq!(actual_r, expected_r);
+    TestResult::passed()
+}
+
+#[test]
+fn fixed_poly_div() {
+    use crate::galois::{MonicPolynomial, GF2561D_P2};
+    let p = Polynomial::new(vec![GF2561D(12), GF2561D(104), GF2561D(104)]);
+    {
+        let (q, r) = naive_poly_div_with_rem(GF2561D_P2::repr(), p.clone());
+        println!("expected q={}, r={}", q, r);
+        assert_eq!(p.clone() * q + r, GF2561D_P2::repr());
+    }
+    {
+        let (q, r) = GF2561D_P2::repr().div_with_rem(p.clone());
+        println!("actual q={}, r={}", q, r);
+        assert_eq!(p * q + r, GF2561D_P2::repr());
+    }
 }
