@@ -37,10 +37,12 @@ pub mod goppa;
 pub mod lattice;
 pub mod lfsr;
 pub mod linalg;
+pub mod mceliece;
 pub mod merkle;
 pub mod poly;
 pub mod primes;
 pub mod reed_solomon;
+pub mod ser;
 
 pub use crate::{
     adapter::Int,

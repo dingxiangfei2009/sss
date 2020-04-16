@@ -3,6 +3,8 @@ use super::*;
 use bitvec::{order::Lsb0, vec::BitVec};
 use serde::{de::Error as _, Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::ser::{binary_field_to_bitvec_u32, bitvec_u32_to_binary_field};
+
 pub struct BinaryPacked<T>(pub T);
 
 #[derive(Serialize, Deserialize)]
@@ -66,51 +68,18 @@ struct BinaryPackedGoppaDecoder {
     invert_factors: Option<Vec<Vec<Vec<u32>>>>,
 }
 
-fn binary_field_to_bitvec_u32<F, T>(m: usize, x: F) -> Vec<u32>
-where
-    F: FiniteField + Clone,
-    T: ExtensionTower<Super = F, Bottom = F2>,
-{
-    let mut bv: BitVec<Lsb0, u32> = BitVec::new();
-    bv.resize(m, false);
-    for (i, F2(x)) in T::to_vec(x).into_iter().enumerate() {
-        if x > 0 {
-            bv.set(i, true);
-        }
-    }
-    bv.shrink_to_fit();
-    bv.into_vec()
-}
-
-fn bitvec_u32_to_binary_field<F, T>(x: Vec<u32>) -> F
-where
-    F: FiniteField + Clone,
-    T: ExtensionTower<Super = F, Bottom = F2>,
-{
-    let bases = T::basis_elements_over_bottom();
-    let bv: BitVec<Lsb0, u32> = BitVec::from_vec(x);
-    let mut x = F::zero();
-    for (&a, b) in bv.iter().zip(bases.into_iter()) {
-        if a {
-            x += b;
-        }
-    }
-    x
-}
-
 impl<F, T, M> Serialize for BinaryPacked<GoppaDecoder<F, T, M>>
 where
     F: FiniteField + Clone,
     T: ExtensionTower<Super = F, Bottom = F2>,
 {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let m = T::degree_extension::<Int>().assert_usize();
         let points = self
             .0
             .points
             .iter()
             .cloned()
-            .map(|p| binary_field_to_bitvec_u32::<F, T>(m, p))
+            .map(binary_field_to_bitvec_u32::<F, T>)
             .collect();
         let g = self
             .0
@@ -118,7 +87,7 @@ where
             .0
             .iter()
             .cloned()
-            .map(|g| binary_field_to_bitvec_u32::<F, T>(m, g))
+            .map(binary_field_to_bitvec_u32::<F, T>)
             .collect();
         let invert_factors = Some(
             self.0
@@ -127,7 +96,7 @@ where
                 .cloned()
                 .map(|Polynomial(p)| {
                     p.into_iter()
-                        .map(|p| binary_field_to_bitvec_u32::<F, T>(m, p))
+                        .map(binary_field_to_bitvec_u32::<F, T>)
                         .collect()
                 })
                 .collect(),

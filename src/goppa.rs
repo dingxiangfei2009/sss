@@ -46,6 +46,15 @@ where
         let h = stack![Axis(1), Array2::eye(m * self.t), self.parity_check];
         mat_vec_mul(&h, ArrayView1::from(msg)).to_vec()
     }
+
+    pub fn weight(&self) -> usize {
+        self.t
+    }
+
+    pub fn size(&self) -> usize {
+        let m = T::degree_extension::<Int>().assert_usize();
+        self.t * m + self.parity_check.dim().1
+    }
 }
 
 fn generialized_sugiyama<F>(
@@ -97,6 +106,89 @@ where
     T::Bottom: Send + Sync,
     M: MultipointEvaluator<F>,
 {
+    fn new(g: Polynomial<F>, points: Vec<F>) -> Option<Self> {
+        let multipoint_eval = M::prepare(points.clone());
+        if multipoint_eval
+            .eval(g.clone())
+            .into_iter()
+            .any(|p| p.is_zero())
+        {
+            None
+        } else {
+            let invert_factors = points
+                .par_iter()
+                .map(|alpha| invert_factor_poly(&g, alpha.clone()))
+                .collect();
+            Some(Self {
+                multipoint_eval,
+                points,
+                g_poly: g,
+                invert_factors,
+                _p: PhantomData,
+            })
+        }
+    }
+
+    pub fn weight(&self) -> usize {
+        self.g_poly.degree()
+    }
+
+    pub fn encoder(&self) -> Option<GoppaEncoder<T::Bottom, T>> {
+        let n = self.points.len();
+        let t = self.g_poly.degree();
+        let m = T::degree_extension::<Int>().assert_usize();
+
+        let alphas_arr = Array1::from(self.points.clone());
+        let gs: Vec<_> = self
+            .multipoint_eval
+            .eval(self.g_poly.clone())
+            .into_iter()
+            .map(|y| <F as TwoSidedInverse<Multiplicative>>::two_sided_inverse(&y))
+            .collect();
+        let gs = Array1::from(gs);
+        let mut h = vec![];
+        let mut r = gs.clone();
+        for _ in 0..t {
+            let q: Vec<_> = r.iter().cloned().flat_map(T::to_vec).collect();
+            let q = ArrayView2::from_shape((n, m), &q).expect("shape should be correct");
+            let q = q.t();
+            h.extend(q.iter().cloned());
+            r = r * alphas_arr.clone();
+        }
+        let h = Array2::from_shape_vec((m * t, n), h).expect("shape should be correct");
+        let h = gaussian_elimination(h);
+        // expand and gaussian eliminate
+        let bottom_one = T::Bottom::one();
+        if h.slice(s![.., ..m * t])
+            .axis_iter(Axis(0))
+            .into_par_iter()
+            .enumerate()
+            .any(|(i, r)| {
+                r.axis_iter(Axis(0))
+                    .into_par_iter()
+                    .enumerate()
+                    .any(|(j, a)| {
+                        let a = a.into_scalar();
+                        i == j && *a != bottom_one || i != j && !T::Bottom::is_zero(a)
+                    })
+            })
+        {
+            return None;
+        }
+        let h = h.slice(s![.., m * t..]).to_owned();
+        Some(GoppaEncoder {
+            parity_check: h,
+            t,
+            _p: PhantomData,
+        })
+    }
+
+    pub fn code_len(&self) -> usize {
+        let m = T::degree_extension::<Int>().assert_usize();
+        let t = self.g_poly.degree();
+        m * t
+    }
+
     pub fn decode(&self, sense: Vec<T::Bottom>) -> (Vec<T::Bottom>, Vec<T::Bottom>) {
         let n = self.points.len();
         let m = T::degree_extension::<Int>().assert_usize();
@@ -178,6 +270,21 @@ where
             _p: PhantomData,
         }
     }
+
+    pub fn code_len(&self) -> usize {
+        let m = T::degree_extension::<Int>().assert_usize();
+        let t = self.g_poly.degree();
+        m * t
+    }
+
+    pub fn size(&self) -> usize {
+        self.points.len()
+    }
+
+    pub fn weight(&self) -> usize {
+        self.g_poly.degree()
+    }
+
     pub fn decode(&self, sense: Vec<T::Bottom>) -> (Vec<T::Bottom>, Vec<T::Bottom>) {
         let n = self.points.len();
         let m = T::degree_extension::<Int>().assert_usize();
@@ -231,69 +338,8 @@ where
     T::Bottom: Send + Sync,
     M: MultipointEvaluator<F>,
 {
-    let n = alphas.len();
-    let t = g.degree();
-    let m = T::degree_extension::<Int>().assert_usize();
-
-    let mut gs = vec![];
-    for alpha in &alphas {
-        let Coord(_, y) = g.eval_at(alpha.clone());
-        if y.is_zero() {
-            return None;
-        }
-        gs.push(<F as TwoSidedInverse<Multiplicative>>::two_sided_inverse(
-            &y,
-        ))
-    }
-    let alphas_arr = Array1::from(alphas.clone());
-    let gs = Array1::from(gs);
-    let mut h = vec![];
-    let mut r = gs.clone();
-    for _ in 0..t {
-        let q: Vec<_> = r.iter().cloned().flat_map(T::to_vec).collect();
-        let q = ArrayView2::from_shape((n, m), &q).expect("shape should be correct");
-        let q = q.t();
-        h.extend(q.iter().cloned());
-        r = r * alphas_arr.clone();
-    }
-    let h = Array2::from_shape_vec((m * t, n), h).expect("shape should be correct");
-    let h = gaussian_elimination(h);
-    // expand and gaussian eliminate
-    let bottom_one = T::Bottom::one();
-    if h.slice(s![.., ..m * t])
-        .axis_iter(Axis(0))
-        .into_par_iter()
-        .enumerate()
-        .any(|(i, r)| {
-            r.axis_iter(Axis(0))
-                .into_par_iter()
-                .enumerate()
-                .any(|(j, a)| {
-                    let a = a.into_scalar();
-                    i == j && *a != bottom_one || i != j && !T::Bottom::is_zero(a)
-                })
-        })
-    {
-        return None;
-    }
-    let h = h.slice(s![.., m * t..]).to_owned();
-    let invert_factors = alphas
-        .par_iter()
-        .map(|alpha| invert_factor_poly(&g, alpha.clone()))
-        .collect();
-
-    let encoder = GoppaEncoder {
-        parity_check: h,
-        t,
-        _p: PhantomData,
-    };
-    let decoder = GoppaDecoder {
-        multipoint_eval: M::prepare(alphas.clone()),
-        points: alphas,
-        g_poly: g,
-        invert_factors,
-        _p: PhantomData,
-    };
+    let decoder = GoppaDecoder::new(g, alphas)?;
+    let encoder = decoder.encoder()?;
     Some((encoder, decoder))
 }
 
