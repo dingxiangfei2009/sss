@@ -16,8 +16,9 @@ use std::{
 
 use alga::general::{Additive, Field, Identity, Multiplicative, TwoSidedInverse};
 use num::{
+    bigint::Sign,
     traits::{One, Zero},
-    BigUint,
+    BigInt, BigUint,
 };
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -43,6 +44,7 @@ pub mod poly;
 pub mod primes;
 pub mod reed_solomon;
 pub mod ser;
+pub mod unsafe_field;
 
 pub use crate::{
     adapter::Int,
@@ -50,7 +52,7 @@ pub use crate::{
     field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2},
 };
 
-pub trait EuclideanDomain<Degree: Ord>: Zero {
+pub trait EuclideanDomain<Degree: Ord>: Zero + One + Sub<Output = Self> {
     /// Euclidean measure of this domain
     fn degree(&self) -> Degree;
 
@@ -58,6 +60,14 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
     /// so that the remainder iss either zero, or the degree of the remainder is less
     /// than the degree of the divisor
     fn div_with_rem(self, other: Self) -> (Self, Self);
+
+    fn rem(self, other: Self) -> Self {
+        self.div_with_rem(other).1
+    }
+
+    fn div(self, other: Self) -> Self {
+        self.div_with_rem(other).0
+    }
 
     fn gcd(mut self, mut other: Self) -> Self
     where
@@ -82,7 +92,7 @@ pub trait EuclideanDomain<Degree: Ord>: Zero {
 
     fn extended_gcd<G, H>(self, other: Self) -> (G, H, Self)
     where
-        Self: Clone + One + Sub<Output = Self>,
+        Self: Clone,
         G: Clone + Zero + One + Mul<Self, Output = G> + Sub<Output = G>,
         H: Clone + Zero + One + Mul<Self, Output = H> + Sub<Output = H>,
     {
@@ -137,6 +147,18 @@ macro_rules! impl_euclidean_domain_int {
 
 impl_euclidean_domain_int! {
     usize, u8, u16, u32, u64, u128
+}
+
+impl EuclideanDomain<BigInt> for BigInt {
+    fn degree(&self) -> BigInt {
+        self.clone()
+    }
+    fn div_with_rem(self, other: Self) -> (Self, Self) {
+        assert_eq!(other.sign(), Sign::Plus);
+        let rem = self.clone() % other.clone();
+        let quot = self / other;
+        (quot, rem)
+    }
 }
 
 /// Univariate polynomial ring over a field `T`

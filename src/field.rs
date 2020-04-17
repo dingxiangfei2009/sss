@@ -1,5 +1,5 @@
 use std::{
-    fmt::{Display, Formatter, Result as FmtResult},
+    fmt::{Debug, Display, Formatter, Result as FmtResult},
     hash::{Hash, Hasher},
     marker::PhantomData,
     ops::{
@@ -8,7 +8,11 @@ use std::{
     },
 };
 
-use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
+use alga::general::{
+    AbstractField, AbstractGroup, AbstractGroupAbelian, AbstractLoop, AbstractMagma,
+    AbstractMonoid, AbstractQuasigroup, AbstractRing, AbstractRingCommutative, AbstractSemigroup,
+    Additive, Identity, Multiplicative, TwoSidedInverse,
+};
 use alga_derive::Alga;
 use num::traits::{One, Zero};
 use rand::RngCore;
@@ -703,9 +707,9 @@ where
 
 impl<P, V, D> Copy for Fp<P, V, D> where V: Copy {}
 
-impl<P, V, D> std::fmt::Debug for Fp<P, V, D>
+impl<P, V, D> Debug for Fp<P, V, D>
 where
-    V: std::fmt::Debug,
+    V: Debug,
 {
     fn fmt(&self, formatter: &mut Formatter) -> FmtResult {
         self.value.fmt(formatter)
@@ -916,7 +920,7 @@ where
     }
 }
 
-impl<P, V, D> alga::general::AbstractField for Fp<P, V, D>
+impl<P, V, D> AbstractField for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -924,7 +928,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractRingCommutative for Fp<P, V, D>
+impl<P, V, D> AbstractRingCommutative for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -932,7 +936,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractRing for Fp<P, V, D>
+impl<P, V, D> AbstractRing for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -940,7 +944,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractGroupAbelian<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractGroupAbelian<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -948,7 +952,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractGroupAbelian<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractGroupAbelian<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -956,7 +960,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractGroup<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractGroup<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -964,7 +968,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractGroup<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractGroup<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -972,7 +976,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractMonoid<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractMonoid<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -980,7 +984,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractMonoid<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractMonoid<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -988,7 +992,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractLoop<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractLoop<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -996,7 +1000,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractLoop<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractLoop<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -1004,7 +1008,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractSemigroup<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractSemigroup<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -1012,7 +1016,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractSemigroup<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractSemigroup<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -1020,7 +1024,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractQuasigroup<Additive> for Fp<P, V, D>
+impl<P, V, D> AbstractQuasigroup<Additive> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,
@@ -1028,7 +1032,7 @@ where
 {
 }
 
-impl<P, V, D> alga::general::AbstractQuasigroup<Multiplicative> for Fp<P, V, D>
+impl<P, V, D> AbstractQuasigroup<Multiplicative> for Fp<P, V, D>
 where
     P: PrimeModulo<V>,
     V: One + Zero + Clone + EuclideanDomain<D> + Eq + Sub<Output = V>,

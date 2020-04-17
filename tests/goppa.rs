@@ -59,8 +59,8 @@ fn mceliece() {
     let BinaryPacked(enc): BinaryPacked<GoppaEncoder<F2, GF65536NTower>> =
         serde_json::from_str(include_str!("mc.pub")).unwrap();
     let BinaryPacked(dec): BinaryPacked<
-            GoppaDecoder<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG>,
-        > = serde_json::from_str(include_str!("mc.pri")).unwrap();
+        GoppaDecoder<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG>,
+    > = serde_json::from_str(include_str!("mc.pri")).unwrap();
 
     let sk = McElieceKEM65536PrivateKey::new(dec).unwrap();
     let pk = McElieceKEM65536PublicKey::new(enc);
