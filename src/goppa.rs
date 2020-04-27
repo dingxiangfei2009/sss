@@ -133,7 +133,39 @@ where
         self.g_poly.degree()
     }
 
-    pub fn encoder(&self) -> Option<GoppaEncoder<T::Bottom, T>> {
+    fn convert_systematic(mut self, mu: usize, nu: usize) -> Option<Self> {
+        let n = self.points.len();
+        let t = self.g_poly.degree();
+        let m = T::degree_extension::<Int>().assert_usize();
+        let h = self.parity_check_matrix();
+        let mut c = 0;
+        while c < m * t && !h[(c, c)].is_zero() {
+            c += 1;
+        }
+        if c < m * t - mu {
+            return None;
+        }
+        let mut pivots = vec![];
+        for d in c..m * t {
+            let mut pivot = d;
+            while pivot < n && h[(d, pivot)].is_zero() {
+                pivot += 1;
+            }
+            if pivot == n {
+                return None; // not a full rank matrix
+            } else if d + 1 == m * t && pivot + 1 > n - mu + nu {
+                return None;
+            }
+            pivots.push((d, pivot));
+        }
+        for (a, b) in pivots {
+            self.points.swap(a, b);
+        }
+        let Self { points, g_poly, .. } = self;
+        Self::new(g_poly, points)
+    }
+
+    fn parity_check_matrix(&self) -> Array2<T::Bottom> {
         let n = self.points.len();
         let t = self.g_poly.degree();
         let m = T::degree_extension::<Int>().assert_usize();
@@ -142,8 +174,8 @@ where
         let gs: Vec<_> = self
             .multipoint_eval
             .eval(self.g_poly.clone())
-            .into_iter()
-            .map(|y| <F as TwoSidedInverse<Multiplicative>>::two_sided_inverse(&y))
+            .iter()
+            .map(<F as TwoSidedInverse<Multiplicative>>::two_sided_inverse)
             .collect();
         let gs = Array1::from(gs);
         let mut h = vec![];
@@ -156,7 +188,13 @@ where
             r = r * alphas_arr.clone();
         }
         let h = Array2::from_shape_vec((m * t, n), h).expect("shape should be correct");
-        let h = gaussian_elimination(h);
+        gaussian_elimination(h)
+    }
+
+    pub fn encoder(&self) -> Option<GoppaEncoder<T::Bottom, T>> {
+        let t = self.g_poly.degree();
+        let m = T::degree_extension::<Int>().assert_usize();
+        let h = self.parity_check_matrix();
         // expand and gaussian eliminate
         let bottom_one = T::Bottom::one();
         if h.slice(s![.., ..m * t])
@@ -331,6 +369,8 @@ where
 pub fn goppa<F, T, M>(
     g: Polynomial<F>,
     alphas: Vec<F>,
+    mu: usize,
+    nu: usize,
 ) -> Option<(GoppaEncoder<T::Bottom, T>, GoppaDecoder<F, T, M>)>
 where
     F: FiniteField + Clone + Send + Sync,
@@ -338,13 +378,13 @@ where
     T::Bottom: Send + Sync,
     M: MultipointEvaluator<F>,
 {
-    let decoder = GoppaDecoder::new(g, alphas)?;
-    let encoder = decoder.encoder()?;
+    let decoder = GoppaDecoder::new(g, alphas)?.convert_systematic(mu, nu)?;
+    let encoder = decoder.encoder()?; // should be full rank
     Some((encoder, decoder))
 }
 
 fn sample<R: RngCore + CryptoRng, T: Clone>(
-    n: Int,
+    n: &Int,
     k: usize,
     rng: &mut R,
     convert: impl Fn(Int) -> T,
@@ -360,12 +400,12 @@ fn sample<R: RngCore + CryptoRng, T: Clone>(
         i += Int::one();
     }
     let mut w: f64 = (rng.gen::<f64>().ln() / (k as f64)).exp();
-    while i < n {
+    while i < *n {
         i += Int::from(
             rug::Integer::from_f64(rng.gen::<f64>().ln() / (1. - w).ln())
                 .expect("within representable integers"),
         ) + Int::from(1u8);
-        while i < n {
+        while i < *n {
             let val = convert(i.clone());
             if admissible(val.clone()) {
                 v[rng.gen_range(0, k)] = val;
@@ -383,6 +423,8 @@ pub fn generate<F, T, M, R>(
     rng: &mut R,
     correction_level: usize,
     size: usize,
+    at_least_full_rank: usize,
+    at_most_null_rank: usize,
 ) -> (GoppaEncoder<T::Bottom, T>, GoppaDecoder<F, T, M>)
 where
     F: FiniteField + Clone + ArbitraryElement + Send + Sync,
@@ -398,6 +440,7 @@ where
     assert!(t_ < n);
     let bases = T::basis_elements_over_bottom();
     let char: Int = T::Bottom::characteristic();
+    let field_size: Int = F::field_size();
     loop {
         let g = Polynomial(
             repeat_with(|| F::arbitrary(rng))
@@ -407,7 +450,7 @@ where
         );
         // hint: this loop always terminates since t < n <= |F|
         let alphas = sample(
-            F::field_size::<Int>(),
+            &field_size,
             n,
             rng,
             |mut x| {
@@ -422,7 +465,7 @@ where
             },
             |x| !g.eval_at(x).1.is_zero(),
         );
-        if let Some(res) = goppa(g, alphas) {
+        if let Some(res) = goppa(g, alphas, at_least_full_rank, at_most_null_rank) {
             return res;
         }
     }
@@ -447,11 +490,11 @@ mod tests {
 
     #[test]
     fn encode_decode_small() {
-        let n = 80;
+        let n = 85;
         let t = 5;
         let u = rand::distributions::uniform::Uniform::from(0..n);
         let (enc, dec) = generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(
-            &mut OsRng, t, n,
+            &mut OsRng, t, n, 32, 64,
         );
         let mut x = vec![0; n];
         for _ in 0..t {
@@ -472,7 +515,7 @@ mod tests {
         let t = 94;
         let u = rand::distributions::uniform::Uniform::from(0..n);
         let (enc, dec) = generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(
-            &mut OsRng, t, n,
+            &mut OsRng, t, n, 32, 64,
         );
         let dec = BinaryGoppaDecoder::from_decoder(dec);
         for _ in 0..4 {
@@ -513,7 +556,7 @@ mod tests {
             alphas.push(alpha.clone());
             alpha *= F16::root();
         }
-        let (enc, dec) = goppa::<_, F16Tower, MultiPointEvalTable<_>>(g, alphas).unwrap();
+        let (enc, dec) = goppa::<_, F16Tower, MultiPointEvalTable<_>>(g, alphas, 32, 64).unwrap();
         let expected_h = arr2(&[
             [F2(1), F2(0), F2(0), F2(0), F2(0), F2(1), F2(1), F2(1)],
             [F2(0), F2(1), F2(1), F2(1), F2(0), F2(0), F2(0), F2(1)],
