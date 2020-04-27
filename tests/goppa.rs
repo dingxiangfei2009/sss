@@ -12,8 +12,9 @@ fn encode_decode_large() {
     let n = 6960;
     let t = 94;
     let u = rand::distributions::uniform::Uniform::from(0..n);
-    let (enc, dec) =
-        generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(&mut OsRng, t, n);
+    let (enc, dec) = generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(
+        &mut OsRng, t, n, 32, 64,
+    );
     let dec = BinaryGoppaDecoder::from_decoder(dec);
     for _ in 0..2 {
         let mut x = vec![0; n];

@@ -32,8 +32,9 @@ fn main() -> Result<(), Error> {
     let opt = Opt::from_args();
     let n = 6960;
     let t = 94;
-    let (enc, dec) =
-        generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(&mut OsRng, t, n);
+    let (enc, dec) = generate::<GF65536N, GF65536NTower, GF65536NPreparedMultipointEvalVZG, _>(
+        &mut OsRng, t, n, 32, 64,
+    );
     write!(
         File::create(opt.pubkey)?,
         "{}",
