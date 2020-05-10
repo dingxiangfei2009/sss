@@ -3,7 +3,7 @@ use std::ops::Mul;
 use alga::general::Field;
 use ndarray::{s, Array1, Array2, ArrayView1, ArrayView2, Axis, Zip};
 use num::Zero;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 
 pub fn mat_vec_mul<'a, 'b, A, B>(
     a: impl Into<ArrayView2<'a, A>>,
@@ -57,20 +57,35 @@ pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<
     let mut pivot = 0;
     for i in 0..n {
         if a[[i, pivot]].is_zero() {
-            let mut new_pivot = None;
-            for j in pivot..m {
-                let mut a = a.slice_mut(s![i.., ..]);
-                let mut it = a.axis_iter_mut(Axis(0));
-                let this_row = it.next().expect("row must exists");
-                if let Some(that_row) = it.find(|row| !row[j].is_zero()) {
+            if let Some((new_pivot, row)) = (pivot..m)
+                .into_par_iter()
+                .flat_map(|pivot| {
+                    let a: ArrayView1<_> = a.slice(s![i.., pivot]);
+                    a.axis_iter(Axis(0))
+                        .into_par_iter()
+                        .enumerate()
+                        .flat_map(|(j, x)| {
+                            if x.into_scalar().is_zero() {
+                                None
+                            } else {
+                                Some(j)
+                            }
+                        })
+                        .find_any(|_| true)
+                        .map(|row| (pivot, row))
+                })
+                .find_first(|_| true)
+            {
+                pivot = new_pivot;
+                if row > 0 {
+                    let mut a = a.slice_mut(s![i..; row, ..]);
+                    let mut it = a.axis_iter_mut(Axis(0));
+                    let this_row = it.next().expect("this row exists");
+                    let that_row = it.next().expect("that row exists");
                     Zip::from(this_row).and(that_row).par_apply(std::mem::swap);
-                    new_pivot = Some(j);
-                    break;
                 }
-            }
-            match new_pivot {
-                Some(new_pivot) => pivot = new_pivot,
-                None => break,
+            } else {
+                break;
             }
         }
         pivots.push((i, pivot));
