@@ -13,6 +13,7 @@ use crate::{
     ser::{bitvec_to_u8, u8_to_bitvec},
 };
 
+#[derive(Serialize, Deserialize)]
 pub struct McElieceKEM65536PublicKey {
     key: GoppaEncoder<F2, GF65536NTower>,
 }
@@ -29,7 +30,17 @@ pub struct McElieceCiphertext<H> {
     pub c_0: Vec<u8>,
     pub c_1: Vec<u8>,
     #[serde(skip)]
-    pub _p: PhantomData<H>,
+    _p: PhantomData<H>,
+}
+
+impl<H> McElieceCiphertext<H> {
+    pub fn new(c_0: Vec<u8>, c_1: Vec<u8>) -> Self {
+        Self {
+            c_0,
+            c_1,
+            _p: PhantomData,
+        }
+    }
 }
 
 impl McElieceKEM65536PublicKey {
