@@ -65,18 +65,18 @@ impl McElieceKEM65536PublicKey {
         let secret_bits = bitvec_to_u8(&secret);
         let c_1 = {
             let mut h = H::new();
-            h.input([2, 0]);
-            h.input(&secret_bits);
-            h.result().to_vec()
+            h.update([2, 0]);
+            h.update(&secret_bits);
+            h.finalize().to_vec()
         };
         let k = {
             let mut h = H::new();
-            h.input([1, 0]);
-            h.input(&secret_bits);
-            h.input(&c_0);
-            h.input([0]);
-            h.input(&c_1);
-            h.result()
+            h.update([1, 0]);
+            h.update(&secret_bits);
+            h.update(&c_0);
+            h.update([0]);
+            h.update(&c_1);
+            h.finalize()
         };
         (
             McElieceSessionKey(k.to_vec()),
@@ -119,21 +119,21 @@ where
 
         {
             let mut h = H::new();
-            h.input([2, 0]);
-            h.input(&secret_bits);
-            if h.result().to_vec() != c_1 {
+            h.update([2, 0]);
+            h.update(&secret_bits);
+            if h.finalize().to_vec() != c_1 {
                 secret_bits = vec![0];
                 b = 0;
             }
         };
         {
             let mut h = H::new();
-            h.input([b, 0]);
-            h.input(&secret_bits);
-            h.input(&c_0_);
-            h.input([0]);
-            h.input(&c_1);
-            McElieceSessionKey(h.result().to_vec())
+            h.update([b, 0]);
+            h.update(&secret_bits);
+            h.update(&c_0_);
+            h.update([0]);
+            h.update(&c_1);
+            McElieceSessionKey(h.finalize().to_vec())
         }
     }
 }
