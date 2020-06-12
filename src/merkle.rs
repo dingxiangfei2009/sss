@@ -565,10 +565,7 @@ where
 mod tests {
     use super::*;
 
-    use sha2::{
-        digest::{FixedOutput, Input},
-        Sha256,
-    };
+    use sha2::{digest::Digest, Sha256};
 
     #[derive(Debug)]
     struct MyHasher(u64);
@@ -577,21 +574,21 @@ mod tests {
         type Output = Vec<u8>;
         fn hash<S: Borrow<u8>>(&self, data: S) -> Self::Output {
             let mut d = Sha256::default();
-            d.input(self.0.to_le_bytes());
-            d.input(data.borrow().to_le_bytes());
-            d.fixed_result().into_iter().collect()
+            d.update(self.0.to_le_bytes());
+            d.update(data.borrow().to_le_bytes());
+            d.finalize().into_iter().collect()
         }
     }
     impl MerkleHash<(Vec<u8>, Vec<u8>)> for MyHasher {
         type Output = Vec<u8>;
         fn hash<S: Borrow<(Vec<u8>, Vec<u8>)>>(&self, data: S) -> Self::Output {
             let mut d = Sha256::default();
-            d.input(self.0.to_le_bytes());
+            d.update(self.0.to_le_bytes());
             let (a, b) = data.borrow();
-            d.input(a);
-            d.input(b", with another ");
-            d.input(b);
-            d.fixed_result().into_iter().collect()
+            d.update(a);
+            d.update(b", with another ");
+            d.update(b);
+            d.finalize().into_iter().collect()
         }
     }
 

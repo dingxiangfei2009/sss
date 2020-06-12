@@ -350,11 +350,8 @@ impl AbstractMagma<Multiplicative> for GF2561D {
             (GF2561D(_), GF2561D(0)) => GF2561D(0),
             (GF2561D(left), GF2561D(right)) => {
                 let log = TABLES.log[left as usize] as u16 + TABLES.log[right as usize] as u16;
-                if log < 255 {
-                    GF2561D(TABLES.exp[log as usize])
-                } else {
-                    GF2561D(TABLES.exp[(log - 255) as usize])
-                }
+                let log = if log < 255 { log } else { log - 255 };
+                GF2561D(TABLES.exp[log as usize])
             }
         }
     }
@@ -372,8 +369,9 @@ impl TwoSidedInverse<Multiplicative> for GF2561D {
     fn two_sided_inverse(&self) -> Self {
         match *self {
             GF2561D(0) => panic!("divide by zero"),
+            GF2561D(1) => GF2561D(1),
             GF2561D(x) => {
-                let log = 255 - TABLES.log[x as usize] as u16;
+                let log = 255 - TABLES.log[x as usize];
                 GF2561D(TABLES.exp[log as usize])
             }
         }

@@ -81,7 +81,7 @@ impl FiniteField for F {
 }
 
 lazy_static! {
-    static ref P273_2_72: Integer = { Integer::from(273) << 72 + 1 };
+    static ref P273_2_72: Integer = Integer::from(273) << 72 + 1;
 }
 
 pub type F = Fp<Prime273_72, Int, Int>;
