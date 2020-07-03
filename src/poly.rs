@@ -2,11 +2,13 @@ use alga::general::Field;
 
 use crate::{Coord, EuclideanDomain, Polynomial};
 
+/// Multi-point evaluators of polynomials over a fixed set of points
 pub trait MultipointEvaluator<F> {
     fn prepare(points: Vec<F>) -> Self;
     fn eval(&self, p: Polynomial<F>) -> Vec<F>;
 }
 
+/// A performant multi-point polynomaial evaluator by recursive quotients
 pub struct MultiPointEvalTable<F> {
     n: usize,
     p: Polynomial<F>,
@@ -18,6 +20,7 @@ impl<F> MultiPointEvalTable<F>
 where
     F: Field + Clone,
 {
+    /// Construct the pre-computation table over the points
     pub fn build(points: &[F]) -> Self {
         match points {
             [] => Self {
@@ -50,6 +53,7 @@ where
         }
     }
 
+    /// Evaluate the polynomial over the fixed set of points using the pre-computed table
     pub fn eval(&self, f: Polynomial<F>) -> Vec<F> {
         let (_, r) = f.div_with_rem(self.p.clone());
         if r.degree() > 0 {

@@ -85,6 +85,7 @@ impl<T, S, G> LazyList<T, S, G> {
     }
 }
 
+/// Multi-point evaluation strategy, by von zur Gathen
 #[derive(Clone, Debug)]
 pub struct MultipointEvalVZGathen<F, T>
 where
@@ -301,6 +302,7 @@ where
     lower
 }
 
+/// Taylor expansion of `p` at `d`.
 pub fn taylor_expansion<F>(p: Polynomial<F>, d: Polynomial<F>) -> Vec<Polynomial<F>>
 where
     F: Field + Clone,

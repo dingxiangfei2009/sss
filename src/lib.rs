@@ -52,12 +52,14 @@ pub use crate::{
     field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2},
 };
 
+/// A [Euclidean Domain](https://en.wikipedia.org/wiki/Euclidean_domain) that has a well-defined
+/// Euclidean function over non-zero elements of the ring.
 pub trait EuclideanDomain<Degree: Ord>: Zero + One + Sub<Output = Self> {
     /// Euclidean measure of this domain
     fn degree(&self) -> Degree;
 
     /// Division with respect to this euclidean measure to give `(quotient, remainder)`,
-    /// so that the remainder iss either zero, or the degree of the remainder is less
+    /// so that the remainder is either zero, or the degree of the remainder is less
     /// than the degree of the divisor
     fn div_with_rem(self, other: Self) -> (Self, Self);
 
@@ -181,6 +183,7 @@ impl<T: Display> Display for Polynomial<T> {
 }
 
 #[derive(Clone, PartialEq, Debug)]
+/// A pair of value and usually a result of evaluating a polynomial at a point
 pub struct Coord<T>(pub T, pub T);
 
 impl<T: Zero> Polynomial<T> {
@@ -322,6 +325,7 @@ where
     T: Field + Clone,
 {
     #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
+    /// Dividing with another polynomial with remainders
     pub fn div(mut self, mut b: Self) -> (Self, Self) {
         truncate_high_degree_zeros(&mut self.0);
         truncate_high_degree_zeros(&mut b.0);
@@ -335,8 +339,6 @@ where
         let mut divisor = b.clone();
         divisor.0.reverse();
         truncate_high_degree_zeros(&mut divisor.0);
-        // let lead_coeff = divisor.0[0].clone();
-        // divisor /= lead_coeff.clone();
 
         divisor = divisor.inv_mod_x_pow(n - m + 1);
         let Polynomial(mut dividend) = self.clone();
@@ -345,7 +347,6 @@ where
         quotient.resize(n - m + 1, T::zero());
         quotient.reverse();
         let quotient = Polynomial::new(quotient);
-        // quotient /= lead_coeff;
         let remainder = self - quotient.clone() * b;
         (quotient, remainder)
     }
@@ -381,6 +382,8 @@ where
         g
     }
 
+    /// A formal derivative of the polynomial.
+    /// The definition is $\dv{x}\sum_n a_n x^n = \sum_n n a_n x^{n-1}$.
     pub fn formal_derivative(mut self) -> Self {
         if self.0.len() > 1 {
             let mut n = T::one();
@@ -395,11 +398,14 @@ where
         }
     }
 
+    /// Test if this polynomial is a unit
     pub fn is_one(&self) -> bool {
         assert!(!self.0.is_empty());
         self.0[0] == T::one() && self.0.iter().skip(1).all(Zero::is_zero)
     }
 
+    /// Evaluate this polynomial at a point.
+    /// This transformation also makes a F-polynomial an endomorphism of any `U` that is an `F`-module.
     pub fn eval_at<U>(&self, x: U) -> Coord<U>
     where
         U: Clone + Mul<Output = U> + Mul<T, Output = U> + From<T> + Zero,
@@ -459,7 +465,7 @@ where
             return Polynomial::zero();
         }
         let (Self(mut left), Self(mut right)) = (self, other);
-        if left.len() < 4 && right.len() < 4 {
+        if left.len() < 64 && right.len() < 64 {
             #[allow(clippy::suspicious_arithmetic_impl)]
             // REASON: use of plus operator here is sensible
             let mut r = vec![T::zero(); left.len() + right.len()];
@@ -654,7 +660,7 @@ where
     None
 }
 
-pub fn truncate_high_degree_zeros<T: Zero>(w: &mut Vec<T>) {
+pub(crate) fn truncate_high_degree_zeros<T: Zero>(w: &mut Vec<T>) {
     let mut zeroed = w.len();
     while zeroed > 1 && w[zeroed - 1].is_zero() {
         zeroed -= 1;
@@ -672,6 +678,7 @@ where
     p
 }
 
+/// Randomized search for a normal basis of `F`.
 pub fn find_normal_basis<R, F>(rng: &mut R) -> F
 where
     R: rand::RngCore,
@@ -702,6 +709,7 @@ fn assert_subfield<F: FiniteField>(deg_ext: usize) {
     );
 }
 
+/// Test if `alpha` generates a normal basis of `F`.
 pub fn test_normal_basis<F>(alpha: F, deg_ext: usize) -> bool
 where
     F: FiniteField + Clone,
@@ -722,6 +730,8 @@ where
     !gcd.is_zero() && gcd.degree() == 0
 }
 
+/// Deterministically search for a generator of normal basis of `F`.
+/// There is at least one normal basis for any finite field `F`.
 pub fn search_normal_basis<F, G>(deg_ext: usize) -> F
 where
     F: FiniteField + Clone + FinitelyGenerated<G>,
@@ -752,6 +762,7 @@ where
 // NOTE: as of Rust 1.27.0, typeck cannot deduce that
 // `<E as for<'a> BitAnd<'a E>>::Output: Zero`
 // even when it is the case
+/// Raise `x` to the power `exp`.
 pub fn pow<F, E>(mut x: F, mut exp: E) -> F
 where
     E: BitAnd<Output = E> + Shr<usize, Output = E> + From<u8> + Zero + Clone,
@@ -770,6 +781,7 @@ where
     x
 }
 
+/// Compute a cyclotomic coset of size `n` in `F`.
 pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
     let mut q = Int::one();
     let mut p_pows = vec![];
@@ -804,6 +816,7 @@ pub fn compute_cyclotomic_cosets<F: FiniteField>(n: usize) -> Vec<Vec<usize>> {
     cosets
 }
 
+/// Uniformly sample an element in the ring `R`, with a precision of `limit` bits.
 pub fn uniform_sample<T, R>(rng: &mut R, limit: T) -> T
 where
     R: RngCore,
