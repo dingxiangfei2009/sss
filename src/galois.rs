@@ -26,6 +26,8 @@ use crate::{
     pow, Coord, EuclideanDomain, Polynomial,
 };
 
+/// Given a generator of a normal basis in `F`, generate a pre-computation table
+/// of form $\beta^{1+q^i}$.
 pub fn compute_normal_basis_multiplication_table<F>(
     base_generator: F,
 ) -> (Vec<F::Scalar>, Vec<Vec<F::Scalar>>)
@@ -80,22 +82,16 @@ where
     (one, table)
 }
 
-/*
-0 1 2 3 4 5 6 7
-1 0 0 0 0 1 0 0
-1 0 0 1 0 0 0 0
-
-0 1 2 3 4 5 6
-1 0 0 0 0 1 0
-1 0 1 0 0 0 0
-*/
-
+/// A `T` is `MonicPolynomial` if `T` encodes a monic `F`-polynomial.
 pub trait MonicPolynomial<F>
 where
     F: Field,
 {
+    /// Returns the degree of `f`
     fn degree() -> usize;
+    /// Returns the representation of `f`
     fn repr() -> Polynomial<F>;
+    /// Returns $g \mod f$, where `poly` encodes $g$.
     fn reduce(poly: Polynomial<F>) -> Polynomial<F> {
         if EuclideanDomain::degree(&poly) < Self::degree() {
             poly
@@ -105,6 +101,7 @@ where
             r
         }
     }
+    /// Returns $g \mod f$, where `poly` encodes $g$.
     fn reduce_mul(mut a: Polynomial<F>, b: Polynomial<F>) -> Polynomial<F> {
         if EuclideanDomain::degree(&a) + EuclideanDomain::degree(&b) < Self::degree() {
             let c = a * b;
@@ -121,6 +118,7 @@ where
             c
         }
     }
+    /// Returns $g^{-1} \mod f$, where `a` encodes $g$.
     fn inv(a: Polynomial<F>) -> Option<Polynomial<F>> {
         let (b, _, g): (Polynomial<F>, Polynomial<F>, Polynomial<F>) =
             Self::reduce(a.clone()).extended_gcd(Self::repr());
@@ -134,6 +132,7 @@ where
     }
 }
 
+/// Encodes a field $F/(P)$, if $P$ is `MonicPolynomial`
 pub struct PolynomialExtension<F, P> {
     data: Polynomial<F>,
     _p: PhantomData<fn() -> P>,

@@ -1,11 +1,21 @@
-//! RLWE Key Exchange with the following parameter
+//! RLWE Key Exchange
+//!
+//! This protocol has the following parameter
+//!
 //! Key size n = 2 ^ 12 = 4096
+//!
 //! Security level kappa <= 0.97 * n = 3973
+//!
 //! Field: GF(40961) whose characteristic q ~ n ^ 3
+//!
 //! f = x ^ (2 ^ 12) + 1
+//!
 //! sigma = 4, such that n >> sigma > omega(sqrt(log_2(n))) > 1
+//!
 //! t = 2 is a small prime, such that t << n << q
+//!
 //! q = 273 * 2 ^ 72 + 1
+//!
 //! gamma = sigma = 4
 
 use std::{

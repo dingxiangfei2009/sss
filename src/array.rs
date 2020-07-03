@@ -2,6 +2,7 @@ use std::mem::MaybeUninit;
 
 use ndarray::{Array, ArrayView, Axis, ErrorKind, RemoveAxis, ShapeError, Zip};
 
+/// A variant of `ndarray::stack!` macro that accepts a borrowed `ArrayView`
 #[macro_export]
 macro_rules! stack {
     ($axis:expr, $( $array:expr ),+ ) => {
