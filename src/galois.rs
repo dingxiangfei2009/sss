@@ -5,7 +5,7 @@ use std::{
     iter::repeat,
     iter::repeat_with,
     marker::PhantomData,
-    mem::take,
+    mem::swap,
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
@@ -23,6 +23,7 @@ use crate::{
     adapter::Int,
     field::{int_inj, ArbitraryElement, ConstructibleNumber, FiniteField, F2, GF2561D},
     linalg::solve,
+    poly::PolynomialLike,
     pow, Coord, EuclideanDomain, Polynomial,
 };
 
@@ -83,16 +84,17 @@ where
 }
 
 /// A `T` is `MonicPolynomial` if `T` encodes a monic `F`-polynomial.
-pub trait MonicPolynomial<F>
+pub trait MonicPolynomial<F, T = Polynomial<F>>
 where
-    F: Field,
+    F: Field + TwoSidedInverse<Multiplicative>,
+    T: PolynomialLike<F>,
 {
     /// Returns the degree of `f`
     fn degree() -> usize;
     /// Returns the representation of `f`
-    fn repr() -> Polynomial<F>;
+    fn repr() -> T;
     /// Returns $g \mod f$, where `poly` encodes $g$.
-    fn reduce(poly: Polynomial<F>) -> Polynomial<F> {
+    fn reduce(poly: T) -> T {
         if EuclideanDomain::degree(&poly) < Self::degree() {
             poly
         } else {
@@ -102,28 +104,30 @@ where
         }
     }
     /// Returns $g \mod f$, where `poly` encodes $g$.
-    fn reduce_mul(mut a: Polynomial<F>, b: Polynomial<F>) -> Polynomial<F> {
+    fn reduce_mul(mut a: T, b: T) -> T {
         if EuclideanDomain::degree(&a) + EuclideanDomain::degree(&b) < Self::degree() {
             let c = a * b;
             debug_assert!(c.degree() < Self::degree());
             c
         } else {
-            let Polynomial(b) = b;
-            let mut c = Polynomial::zero();
+            let Polynomial(b) = b.into_polynomial();
+            let mut c = T::zero();
             for b in b {
                 c = c + a.clone() * b;
-                a = Self::reduce(a * Polynomial(vec![F::zero(), F::one()]));
+                a = Self::reduce(a * T::from_vec(vec![F::zero(), F::one()]));
             }
             debug_assert!(c.degree() < Self::degree());
             c
         }
     }
     /// Returns $g^{-1} \mod f$, where `a` encodes $g$.
-    fn inv(a: Polynomial<F>) -> Option<Polynomial<F>> {
-        let (b, _, g): (Polynomial<F>, Polynomial<F>, Polynomial<F>) =
-            Self::reduce(a.clone()).extended_gcd(Self::repr());
+    fn inv(a: T) -> Option<T> {
+        let (b, _, g): (T, T, T) = Self::reduce(a.clone()).extended_gcd(Self::repr());
         if !g.is_zero() && g.degree() == 0 {
-            let r = Self::reduce(b / g.0[0].clone());
+            let g = <F as TwoSidedInverse<Multiplicative>>::two_sided_inverse(
+                &g.into_polynomial().0[0],
+            );
+            let r = Self::reduce(b * g);
             debug_assert!(r.degree() < Self::degree());
             Some(r)
         } else {
@@ -133,26 +137,29 @@ where
 }
 
 /// Encodes a field $F/(P)$, if $P$ is `MonicPolynomial`
-pub struct PolynomialExtension<F, P> {
-    data: Polynomial<F>,
-    _p: PhantomData<fn() -> P>,
+pub struct PolynomialExtension<F, P, T = Polynomial<F>> {
+    data: T,
+    _p: PhantomData<fn() -> (F, P)>,
 }
 
-impl<F, P> Serialize for PolynomialExtension<F, P>
+impl<F, P, T> Serialize for PolynomialExtension<F, P, T>
 where
     F: Serialize,
+    T: PolynomialLike<F>,
 {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        self.data.serialize(s)
+        self.data.clone().into_polynomial().serialize(s)
     }
 }
 
-impl<'a, F, P> Deserialize<'a> for PolynomialExtension<F, P>
+impl<'a, F, P, T> Deserialize<'a> for PolynomialExtension<F, P, T>
 where
     F: Deserialize<'a>,
+    T: PolynomialLike<F>,
 {
     fn deserialize<D: Deserializer<'a>>(d: D) -> Result<Self, D::Error> {
         let data = Polynomial::<F>::deserialize(d)?;
+        let data = T::from_polynomial(data);
         Ok(Self {
             data,
             _p: PhantomData,
@@ -160,9 +167,9 @@ where
     }
 }
 
-impl<F, P> Debug for PolynomialExtension<F, P>
+impl<F, P, T> Debug for PolynomialExtension<F, P, T>
 where
-    F: Debug,
+    T: Debug,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         f.debug_struct(type_name::<Self>())
@@ -171,29 +178,26 @@ where
     }
 }
 
-impl<F, P> Display for PolynomialExtension<F, P>
+impl<F, P, T> Display for PolynomialExtension<F, P, T>
 where
-    F: Display,
+    T: Display,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         write!(f, "{}({})", type_name::<Self>(), self.data)
     }
 }
 
-impl<F, P> Eq for PolynomialExtension<F, P> where F: Eq {}
+impl<F, P, T: Eq> Eq for PolynomialExtension<F, P, T> {}
 
-impl<F, P> PartialEq for PolynomialExtension<F, P>
-where
-    F: PartialEq,
-{
+impl<F, P, T: PartialEq> PartialEq for PolynomialExtension<F, P, T> {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
     }
 }
 
-impl<F, P> Clone for PolynomialExtension<F, P>
+impl<F, P, T> Clone for PolynomialExtension<F, P, T>
 where
-    F: Clone,
+    T: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -203,42 +207,39 @@ where
     }
 }
 
-impl<F, P> Add for PolynomialExtension<F, P>
+impl<F, P, T> Add for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
-    fn add(self, other: Self) -> Self {
-        Self {
-            data: self.data + other.data,
-            _p: PhantomData,
-        }
+    fn add(mut self, other: Self) -> Self {
+        self.data = self.data + other.data;
+        self
     }
 }
 
-impl<F, P> Sub for PolynomialExtension<F, P>
+impl<F, P, T> Sub for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
-    fn sub(self, other: Self) -> Self {
-        Self {
-            data: self.data - other.data,
-            _p: PhantomData,
-        }
+    fn sub(mut self, other: Self) -> Self {
+        self.data = self.data - other.data;
+        self
     }
 }
 
-impl<F, P> Zero for PolynomialExtension<F, P>
+impl<F, P, T> Zero for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn zero() -> Self {
         Self {
-            data: Polynomial::zero(),
+            data: T::zero(),
             _p: PhantomData,
         }
     }
@@ -247,10 +248,11 @@ where
     }
 }
 
-impl<F, P> Mul for PolynomialExtension<F, P>
+impl<F, P, T> Mul for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
     fn mul(self, other: Self) -> Self {
@@ -263,59 +265,67 @@ where
     }
 }
 
-impl<F, P> One for PolynomialExtension<F, P>
+impl<F, P, T> One for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn one() -> Self {
         Self {
-            data: Polynomial::one(),
+            data: T::one(),
             _p: PhantomData,
         }
     }
 }
 
-impl<F, P> MulAssign for PolynomialExtension<F, P>
+impl<F, P, T> MulAssign for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn mul_assign(&mut self, rhs: Self) {
-        let data = take(&mut self.data);
+        let mut data = T::zero();
+        swap(&mut data, &mut self.data);
         self.data = P::reduce_mul(data, rhs.data);
         debug_assert!(self.data.degree() < P::degree());
     }
 }
 
-impl<F, P> AddAssign for PolynomialExtension<F, P>
+impl<F, P, T> AddAssign for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn add_assign(&mut self, other: Self) {
-        let data = take(&mut self.data);
+        let mut data = T::zero();
+        swap(&mut data, &mut self.data);
         self.data = data + other.data;
         debug_assert!(self.data.degree() < P::degree());
     }
 }
 
-impl<F, P> SubAssign for PolynomialExtension<F, P>
+impl<F, P, T> SubAssign for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn sub_assign(&mut self, other: Self) {
-        let data = take(&mut self.data);
+        let mut data = T::zero();
+        swap(&mut data, &mut self.data);
         self.data = data - other.data;
         debug_assert!(self.data.degree() < P::degree());
     }
 }
 
-impl<F, P> Neg for PolynomialExtension<F, P>
+impl<F, P, T> Neg for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
     fn neg(self) -> Self {
@@ -328,10 +338,11 @@ where
     }
 }
 
-impl<F, P> Div for PolynomialExtension<F, P>
+impl<F, P, T> Div for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
     fn div(self, other: Self) -> Self {
@@ -339,13 +350,15 @@ where
     }
 }
 
-impl<F, P> DivAssign for PolynomialExtension<F, P>
+impl<F, P, T> DivAssign for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn div_assign(&mut self, other: Self) {
-        let data = take(&mut self.data);
+        let mut data = T::zero();
+        swap(&mut data, &mut self.data);
         self.data = P::reduce_mul(
             data,
             TwoSidedInverse::<Multiplicative>::two_sided_inverse(&other).data,
@@ -354,10 +367,11 @@ where
     }
 }
 
-impl<F, P> AbstractMagma<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractMagma<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     #[inline]
     fn operate(&self, right: &Self) -> Self {
@@ -365,10 +379,11 @@ where
     }
 }
 
-impl<F, P> AbstractMagma<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractMagma<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     #[inline]
     fn operate(&self, right: &Self) -> Self {
@@ -376,10 +391,11 @@ where
     }
 }
 
-impl<F, P> TwoSidedInverse<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> TwoSidedInverse<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn two_sided_inverse(&self) -> Self {
         Self {
@@ -389,10 +405,11 @@ where
     }
 }
 
-impl<F, P> TwoSidedInverse<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> TwoSidedInverse<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn two_sided_inverse(&self) -> Self {
         assert!(!self.data.is_zero(), "division by zero");
@@ -403,141 +420,159 @@ where
     }
 }
 
-impl<F, P> Identity<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> Identity<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn identity() -> Self {
         Self {
-            data: Polynomial::zero(),
+            data: T::zero(),
             _p: PhantomData,
         }
     }
 }
 
-impl<F, P> Identity<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> Identity<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn identity() -> Self {
         Self {
-            data: Polynomial::one(),
+            data: T::one(),
             _p: PhantomData,
         }
     }
 }
 
-impl<F, P> AbstractField for PolynomialExtension<F, P>
+impl<F, P, T> AbstractField for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractRingCommutative for PolynomialExtension<F, P>
+impl<F, P, T> AbstractRingCommutative for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractRing for PolynomialExtension<F, P>
+impl<F, P, T> AbstractRing for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractGroupAbelian<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractGroupAbelian<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractGroupAbelian<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractGroupAbelian<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractGroup<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractGroup<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractGroup<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractGroup<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractMonoid<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractMonoid<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractMonoid<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractMonoid<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractLoop<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractLoop<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractLoop<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractLoop<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractSemigroup<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractSemigroup<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractSemigroup<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractSemigroup<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractQuasigroup<Additive> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractQuasigroup<Additive> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> AbstractQuasigroup<Multiplicative> for PolynomialExtension<F, P>
+impl<F, P, T> AbstractQuasigroup<Multiplicative> for PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
 }
 
-impl<F, P> Mul<F> for PolynomialExtension<F, P>
+impl<F, P, T> Mul<F> for PolynomialExtension<F, P, T>
 where
     F: Field + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     type Output = Self;
     fn mul(self, a: F) -> Self {
@@ -548,31 +583,33 @@ where
     }
 }
 
-impl<F, P> FiniteField for PolynomialExtension<F, P>
+impl<F, P, T> FiniteField for PolynomialExtension<F, P, T>
 where
     F: FiniteField + Clone,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F> + PartialEq,
 {
     type Scalar = F;
-    fn characteristic<T: ConstructibleNumber>() -> T {
+    fn characteristic<Char: ConstructibleNumber>() -> Char {
         F::characteristic()
     }
-    fn degree_extension<T: ConstructibleNumber>() -> T {
+    fn degree_extension<Degree: ConstructibleNumber>() -> Degree {
         int_inj(P::degree())
     }
     fn to_vec(&self) -> Vec<F> {
-        let mut data = self.data.clone().0;
+        let Polynomial(mut data) = self.data.clone().into_polynomial();
         data.resize(Self::degree_extension::<Int>().assert_usize(), F::zero());
         data
     }
     fn from_scalar(scalar: Self::Scalar) -> Self {
         Self {
-            data: Polynomial(vec![scalar]),
+            data: T::from_vec(vec![scalar]),
             _p: PhantomData,
         }
     }
     fn frobenius_base(self) -> Self {
         let Self { data, .. } = self;
+        let data = data.into_polynomial();
         let x = Self::root();
         let q: Int = Self::Scalar::field_size();
         let x_q = pow(x, q);
@@ -584,7 +621,7 @@ where
         }
         r
     }
-    fn field_size<T: ConstructibleNumber>() -> T {
+    fn field_size<Size: ConstructibleNumber>() -> Size {
         crate::pow(Self::Scalar::field_size(), Self::degree_extension::<Int>())
     }
 
@@ -592,7 +629,7 @@ where
         if self.data.degree() > 0 {
             None
         } else {
-            let Polynomial(mut data) = self.data;
+            let Polynomial(mut data) = self.data.into_polynomial();
             let mut it = data.drain(..);
             Some(it.next().expect("polynomial should not be empty"))
         }
@@ -600,26 +637,26 @@ where
     fn basis_elements() -> Vec<Self> {
         let mut v = vec![];
         for i in 0..P::degree() {
-            v.push(Self::from_poly(Polynomial::new(
-                repeat(F::zero()).take(i).chain(Some(F::one())),
-            )))
+            let poly = Polynomial::new(repeat(F::zero()).take(i).chain(Some(F::one())));
+            v.push(Self::from_poly(T::from_polynomial(poly)))
         }
         v
     }
 }
 
-impl<F, P> PolynomialExtension<F, P>
+impl<F, P, T> PolynomialExtension<F, P, T>
 where
     F: Field,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     pub fn root() -> Self {
         Self {
-            data: P::reduce(Polynomial(vec![F::zero(), F::one()])),
+            data: P::reduce(T::from_vec(vec![F::zero(), F::one()])),
             _p: PhantomData,
         }
     }
-    pub fn from_poly(poly: Polynomial<F>) -> Self {
+    pub fn from_poly(poly: T) -> Self {
         Self {
             data: P::reduce(poly),
             _p: PhantomData,
@@ -627,15 +664,16 @@ where
     }
 }
 
-impl<F, P> ArbitraryElement for PolynomialExtension<F, P>
+impl<F, P, T> ArbitraryElement for PolynomialExtension<F, P, T>
 where
     F: Field + ArbitraryElement,
-    P: MonicPolynomial<F>,
+    P: MonicPolynomial<F, T>,
+    T: PolynomialLike<F>,
 {
     fn arbitrary<R: RngCore>(rng: &mut R) -> Self {
-        Self::from_poly(Polynomial::new(
+        Self::from_poly(T::from_polynomial(Polynomial::new(
             repeat_with(|| F::arbitrary(rng)).take(P::degree()),
-        ))
+        )))
     }
 }
 
@@ -999,7 +1037,8 @@ where
 {
     type Output = Self;
     fn neg(mut self) -> Self {
-        let data = take(&mut self.data).into_iter().map(|x| -x).collect();
+        let data = self.data;
+        let data = data.into_iter().map(|x| -x).collect();
         self.data = data;
         self
     }
