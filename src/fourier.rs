@@ -597,7 +597,7 @@ mod tests {
 
     lazy_static! {
         static ref GF2561D_NORMAL_BASIS_8_CONV: Box<dyn Send + Sync + Fn(&[GF2561D]) -> Vec<GF2561D>> =
-            { ToeplitzConv(8).apply(&crate::facts::GF2561D_SUB_8_NORMAL_BASIS) };
+            ToeplitzConv(8).apply(&crate::facts::GF2561D_SUB_8_NORMAL_BASIS);
     }
 
     #[quickcheck]

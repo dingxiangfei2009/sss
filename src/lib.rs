@@ -15,7 +15,7 @@ use std::{
     ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
-use alga::general::{Additive, Field, Identity, Multiplicative, Ring, TwoSidedInverse};
+use alga::general::{Additive, Field, Identity, Ring};
 use num::{
     bigint::Sign,
     traits::{One, Zero},
