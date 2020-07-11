@@ -10,18 +10,18 @@ use std::{
 
 use alga::general::Field;
 use failure::Fail;
-use num::{One, Zero};
+use num::One;
 
-use crate::{field::FiniteField, fourier::UnityRoot, pow, Coord, EuclideanDomain, Polynomial};
+use crate::{field::FiniteField, fourier::UnityRoot, poly::PolynomialLike, pow, Coord, Polynomial};
 
 pub type FFTOp<F> = Pin<Arc<dyn Send + Sync + Fn(Vec<F>) -> Vec<F>>>;
 
 /// Reed-Solomon codec
 #[derive(Clone)]
-pub struct ReedSolomon<F> {
+pub struct ReedSolomon<F, P = Polynomial<F>> {
     root: UnityRoot<F>,
     data_len: usize,
-    generator: Polynomial<F>,
+    generator: P,
     fft: FFTOp<F>,
     correction_level: usize,
 }
@@ -73,16 +73,21 @@ impl<F> Deref for DecodeResult<F> {
 }
 
 #[allow(clippy::many_single_char_names)] // REASON: match symbol names with textbooks and papers
-fn sugiyama<F: FiniteField + Clone>(
-    syndrome: Polynomial<F>,
-    t: usize,
-    rho: usize,
-) -> (Polynomial<F>, Polynomial<F>) {
-    let mut a = Polynomial::new(repeat(F::zero()).take(t * 2).chain(once(F::one())));
+fn sugiyama<F, P>(syndrome: P, t: usize, rho: usize) -> (P, P)
+where
+    F: FiniteField + Clone,
+    P: PolynomialLike<F> + Clone,
+{
+    let mut a = P::from_vec(
+        repeat(F::zero())
+            .take(t * 2)
+            .chain(once(F::one()))
+            .collect(),
+    );
     let mut b = syndrome;
     assert!(a.degree() >= b.degree(), "check your math");
     let d = t + rho / 2;
-    let (mut t, mut v) = (Polynomial::zero(), Polynomial::one());
+    let (mut t, mut v) = (P::zero(), P::one());
     while b.degree() >= d {
         let (q, r) = a.div_with_rem(b.clone());
         let j = t - v.clone() * q.clone();
@@ -112,9 +117,10 @@ pub fn forney<F: Field + Clone>(
     }
 }
 
-impl<F> ReedSolomon<F>
+impl<F, P> ReedSolomon<F, P>
 where
     F: FiniteField + Clone,
+    P: PolynomialLike<F> + Clone,
 {
     /// Constructs a Reed-Solomon codec
     ///
@@ -138,7 +144,7 @@ where
         Self {
             data_len,
             root,
-            generator,
+            generator: P::from_polynomial(generator),
             fft,
             correction_level,
         }
@@ -154,7 +160,8 @@ where
                 found: data.len(),
             });
         }
-        let Polynomial(p) = Polynomial::new(data.iter().cloned()) * self.generator.clone();
+        let p = P::from_vec(data.to_vec()) * self.generator.clone();
+        let Polynomial(p) = p.into_polynomial();
         assert!(p.len() <= self.root.order);
         Ok(p.into_iter()
             .chain(repeat(F::zero()))
@@ -175,7 +182,7 @@ where
                 found: code.len(),
             });
         }
-        let mut erasure_poly = Polynomial::one();
+        let mut erasure_poly = P::one();
 
         if erasure.len() > 2 * self.correction_level {
             return Err(DecodeError::TooManyError(self.correction_level));
@@ -190,15 +197,17 @@ where
             }
             code[erasure] = F::zero();
             erasure_poly =
-                erasure_poly * Polynomial(vec![F::one(), -pow(self.root.root.clone(), erasure)]);
+                erasure_poly * P::from_vec(vec![F::one(), -pow(self.root.root.clone(), erasure)]);
         }
 
         let v = (self.fft)(code.clone());
-        let Polynomial(mut syndrome) =
-            Polynomial::new(v[1..=2 * self.correction_level].iter().cloned())
-                * erasure_poly.clone();
-        let syndrome = Polynomial::new(
-            syndrome.drain(..std::cmp::min(syndrome.len(), 2 * self.correction_level + 1)),
+        let syndrome =
+            P::from_vec(v[1..=2 * self.correction_level].to_vec()) * erasure_poly.clone();
+        let Polynomial(mut syndrome) = syndrome.into_polynomial();
+        let syndrome = P::from_vec(
+            syndrome
+                .drain(..std::cmp::min(syndrome.len(), 2 * self.correction_level + 1))
+                .collect(),
         );
         let (err_locator, err_eval) = sugiyama(syndrome, self.correction_level, erasure.len());
 
@@ -207,9 +216,15 @@ where
         }
 
         let err_locator = err_locator * erasure_poly;
-        let forney = forney(err_locator.clone(), err_eval, 1, &self.root);
+        let forney = forney(
+            err_locator.clone().into_polynomial(),
+            err_eval.into_polynomial(),
+            1,
+            &self.root,
+        );
         let fft = (self.fft)(
             err_locator
+                .into_polynomial()
                 .0
                 .into_iter()
                 .chain(repeat(F::zero()))
@@ -233,8 +248,9 @@ where
             error_positions.insert(location);
         }
         let error_positions = error_positions.into_iter().collect();
-        let (Polynomial(data), rem) = Polynomial::new(code).div_with_rem(self.generator.clone());
+        let (data, rem) = P::from_vec(code).div_with_rem(self.generator.clone());
         if rem.is_zero() {
+            let Polynomial(data) = data.into_polynomial();
             let output = data
                 .into_iter()
                 .chain(repeat(F::zero()))
@@ -255,14 +271,18 @@ mod tests {
     use super::*;
 
     use lazy_static::lazy_static;
+    use num::traits::Zero;
 
     use crate::{
         field::GF2561D,
         fourier::{GF2561DG2_255_FFT, GF2561DG2_UNITY_ROOT},
+        poly::fast_mul::GF2561DFastMul,
     };
 
     lazy_static! {
         static ref RS_255_223: ReedSolomon<GF2561D> =
+            ReedSolomon::new(16, GF2561DG2_UNITY_ROOT.clone(), GF2561DG2_255_FFT.clone());
+        static ref RS_255_223_FAST: ReedSolomon<GF2561D, GF2561DFastMul> =
             ReedSolomon::new(16, GF2561DG2_UNITY_ROOT.clone(), GF2561DG2_255_FFT.clone());
     }
 
@@ -298,8 +318,83 @@ mod tests {
         assert_eq!(input, &*data);
     }
 
+    #[test]
+    fn it_works_fast() {
+        let rs = &RS_255_223_FAST;
+        let input: Vec<_> = (0..223).map(GF2561D).collect();
+        let code = rs.encode(&input).unwrap();
+        let data = rs
+            .decode(
+                {
+                    let mut code = code.clone();
+                    code[10] += GF2561D(1);
+                    code[11] += GF2561D(1);
+                    code[12] += GF2561D(1);
+                    code[13] += GF2561D(1);
+                    code[14] += GF2561D(1);
+                    code[1] += GF2561D(1);
+                    code[2] += GF2561D(1);
+                    code[3] += GF2561D(1);
+                    code[4] += GF2561D(1);
+                    code[5] += GF2561D(23);
+                    code[6] += GF2561D(1);
+                    code[77] += GF2561D(255);
+                    code[7] += GF2561D(1);
+                    code[8] += GF2561D(1);
+                    code[9] += GF2561D(1);
+                    code
+                },
+                vec![44, 88],
+            )
+            .unwrap();
+        assert_eq!(input, &*data);
+    }
+
     #[quickcheck]
     fn encode_decode_error_erasure(
+        input: Vec<GF2561D>,
+        error: Vec<(u8, GF2561D)>,
+        erasure: Vec<u8>,
+    ) {
+        let input: Vec<_> = input
+            .into_iter()
+            .chain(repeat(GF2561D::zero()))
+            .take(223)
+            .collect();
+        let mut code = RS_255_223.encode(&input).unwrap();
+        let mut pos = std::collections::HashSet::new();
+        let mut actual_error = vec![];
+        let mut total_check_used = 0;
+        for (ep, e) in error {
+            if total_check_used < 30 && ep < 255 && !pos.contains(&ep) {
+                pos.insert(ep);
+                actual_error.push((ep, e));
+                code[ep as usize] += e;
+                total_check_used += 2;
+            }
+        }
+        let mut actual_erasure = vec![];
+        for e in erasure {
+            if total_check_used < 32 && e < 255 && !pos.contains(&e) {
+                pos.insert(e);
+                actual_erasure.push(e as usize);
+                code[e as usize] = GF2561D::zero();
+                total_check_used += 1;
+            }
+        }
+        let output = RS_255_223
+            .decode(code, actual_erasure.clone())
+            .unwrap_or_else(|e| {
+                panic!(
+                    "error: {}, error={:?}, erasure={:?}, input={:?}",
+                    e, actual_error, actual_erasure, input
+                )
+            });
+        assert_eq!(input, &*output);
+    }
+
+    #[quickcheck]
+    fn encode_decode_error_erasure_fast(
         input: Vec<GF2561D>,
         error: Vec<(u8, GF2561D)>,
         erasure: Vec<u8>,

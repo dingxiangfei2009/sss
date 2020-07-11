@@ -11,10 +11,11 @@ use std::{
     cmp::max,
     fmt::{Display, Formatter, Result as FmtResult},
     iter::repeat_with,
+    mem::swap,
     ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
-use alga::general::{Additive, Field, Identity, Multiplicative, TwoSidedInverse};
+use alga::general::{Additive, Field, Identity, Ring};
 use num::{
     bigint::Sign,
     traits::{One, Zero},
@@ -43,6 +44,7 @@ pub mod merkle;
 pub mod poly;
 pub mod primes;
 pub mod reed_solomon;
+pub mod ring;
 pub mod ser;
 pub mod unsafe_field;
 
@@ -50,6 +52,7 @@ pub use crate::{
     adapter::Int,
     field::int_inj,
     field::{ArbitraryElement, FiniteField, FinitelyGenerated, GF2561DG2},
+    ring::RingInvertible,
 };
 
 /// A [Euclidean Domain](https://en.wikipedia.org/wiki/Euclidean_domain) that has a well-defined
@@ -164,7 +167,7 @@ impl EuclideanDomain<BigInt> for BigInt {
 }
 
 /// Univariate polynomial ring over a field `T`
-#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct Polynomial<T>(pub Vec<T>);
 
 impl<T: Display> Display for Polynomial<T> {
@@ -214,7 +217,7 @@ impl<T: Zero> From<Vec<T>> for Polynomial<T> {
     }
 }
 
-impl<T: Clone + Zero> Add for Polynomial<T> {
+impl<T: Zero> Add for Polynomial<T> {
     type Output = Self;
     fn add(self, other: Self) -> Self {
         if self.is_zero() {
@@ -229,8 +232,11 @@ impl<T: Clone + Zero> Add for Polynomial<T> {
         } else {
             (left, right)
         };
-        for (a, b) in left.iter_mut().zip(right) {
-            *a = a.clone() + b;
+        let mut t = T::zero();
+        for (i, b) in right.into_iter().enumerate() {
+            swap(&mut left[i], &mut t);
+            t = t + b;
+            swap(&mut left[i], &mut t);
         }
         Polynomial::from(left)
     }
@@ -238,7 +244,7 @@ impl<T: Clone + Zero> Add for Polynomial<T> {
 
 impl<T> Sub for Polynomial<T>
 where
-    T: Clone + Zero + Sub<Output = T>,
+    T: Zero + Sub<Output = T>,
 {
     type Output = Self;
     fn sub(self, other: Self) -> Self {
@@ -246,11 +252,14 @@ where
             return self;
         }
         let (Polynomial(mut left), Polynomial(right)) = (self, other);
-        if left.len() < right.len() {
-            left.resize(right.len(), T::zero());
+        while left.len() < right.len() {
+            left.push(T::zero());
         }
+        let mut t = T::zero();
         for (a, b) in left.iter_mut().zip(right) {
-            *a = a.clone() - b;
+            swap(&mut t, a);
+            t = t - b;
+            swap(&mut t, a);
         }
         Polynomial::from(left)
     }
@@ -258,7 +267,7 @@ where
 
 impl<T> Zero for Polynomial<T>
 where
-    T: Zero + Clone,
+    T: Zero,
 {
     fn zero() -> Self {
         Polynomial(vec![T::zero()])
@@ -281,7 +290,7 @@ where
 
 impl<T> Default for Polynomial<T>
 where
-    T: Zero + Clone,
+    T: Zero,
 {
     fn default() -> Self {
         Self::zero()
@@ -302,15 +311,21 @@ where
 }
 
 impl<T: Zero> Polynomial<T> {
-    pub fn mul_pow_x(&mut self, pow: usize) {
-        if !self.is_zero() {
-            self.0.splice(..0, repeat_with(T::zero).take(pow));
+    pub fn mul_pow_x(mut self, pow: usize) -> Self {
+        if self.is_zero() {
+            self
+        } else {
+            Polynomial::new(repeat_with(T::zero).take(pow).chain(self.0.drain(..)))
         }
     }
 
     pub fn is_zero(&self) -> bool {
         assert!(!self.0.is_empty());
         self.0.iter().all(|c| c.is_zero())
+    }
+
+    pub fn degree(&self) -> usize {
+        self.0.len() - 1
     }
 }
 
@@ -322,36 +337,9 @@ impl<T> From<T> for Polynomial<T> {
 
 impl<T> Polynomial<T>
 where
-    T: Field + Clone,
+    T: Ring + RingInvertible + Clone,
 {
-    #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
-    /// Dividing with another polynomial with remainders
-    pub fn div(mut self, mut b: Self) -> (Self, Self) {
-        truncate_high_degree_zeros(&mut self.0);
-        truncate_high_degree_zeros(&mut b.0);
-        assert!(!b.is_zero());
-
-        let n = self.degree();
-        let m = b.degree();
-        if n < m {
-            return (Self::zero(), self);
-        }
-        let mut divisor = b.clone();
-        divisor.0.reverse();
-        truncate_high_degree_zeros(&mut divisor.0);
-
-        divisor = divisor.inv_mod_x_pow(n - m + 1);
-        let Polynomial(mut dividend) = self.clone();
-        dividend.reverse();
-        let Polynomial(mut quotient) = divisor * Polynomial::new(dividend);
-        quotient.resize(n - m + 1, T::zero());
-        quotient.reverse();
-        let quotient = Polynomial::new(quotient);
-        let remainder = self - quotient.clone() * b;
-        (quotient, remainder)
-    }
-
-    pub(crate) fn truncate_upto_deg(&self, deg: usize) -> Self {
+    pub fn truncate_upto_deg(&self, deg: usize) -> Self {
         if self.degree() >= deg {
             Polynomial::new(self.0[..deg].to_vec())
         } else {
@@ -359,13 +347,14 @@ where
         }
     }
 
-    pub(crate) fn inv_mod_x_pow(self, target: usize) -> Self {
+    pub fn inv_mod_x_pow(self, target: usize) -> Self {
         let mut t = target.next_power_of_two();
         t >>= 1;
         let mut j = 2;
-        let mut g = Polynomial(vec![TwoSidedInverse::<Multiplicative>::two_sided_inverse(
-            &self.0[0],
-        )]);
+        let g = RingInvertible::try_invert(
+            self.0[0].clone(),
+        ).expect("only monic polynomials, whose leading coefficient is a unit, is applicable to Newton's method of inversion");
+        let mut g = Polynomial(vec![g]);
         let two = T::one() + T::one();
         while t > 0 {
             let e = if t >> 1 > 0 { j } else { target };
@@ -382,6 +371,37 @@ where
         g
     }
 
+    #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
+    /// Dividing with another polynomial with remainders
+    pub fn div(mut self, mut b: Self) -> (Self, Self) {
+        truncate_high_degree_zeros(&mut self.0);
+        truncate_high_degree_zeros(&mut b.0);
+        assert!(!b.is_zero());
+
+        let n = self.degree();
+        let m = b.degree();
+        if n < m {
+            return (Self::zero(), self);
+        }
+        let Polynomial(mut divisor) = b.clone();
+        divisor.reverse();
+        let divisor = Polynomial::new(divisor).inv_mod_x_pow(n - m + 1);
+
+        let Polynomial(mut dividend) = self.clone();
+        dividend.reverse();
+        let Polynomial(mut quotient) = divisor * Polynomial::new(dividend);
+        quotient.resize(n - m + 1, T::zero());
+        quotient.reverse();
+        let quotient = Polynomial::new(quotient);
+        let remainder = self - quotient.clone() * b;
+        (quotient, remainder)
+    }
+}
+
+impl<T> Polynomial<T>
+where
+    T: Field + Clone,
+{
     /// A formal derivative of the polynomial.
     /// The definition is $\dv{x}\sum_n a_n x^n = \sum_n n a_n x^{n-1}$.
     pub fn formal_derivative(mut self) -> Self {
@@ -497,19 +517,13 @@ where
 
             let left_low = Polynomial::from(left);
             let right_low = Polynomial::from(right);
-            let mut high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
+            let high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
             let low_pdt: Polynomial<_> = left_low.clone() * right_low.clone();
-            let mut mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
+            let mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
                 - high_pdt.clone()
                 - low_pdt.clone();
-            let r_high = {
-                high_pdt.mul_pow_x(m * 2);
-                high_pdt
-            };
-            let r_mid = {
-                mid.mul_pow_x(m);
-                mid
-            };
+            let r_high = high_pdt.mul_pow_x(m * 2);
+            let r_mid = mid.mul_pow_x(m);
             r_high + r_mid + low_pdt
         }
     }
@@ -661,11 +675,14 @@ where
 }
 
 pub(crate) fn truncate_high_degree_zeros<T: Zero>(w: &mut Vec<T>) {
-    let mut zeroed = w.len();
-    while zeroed > 1 && w[zeroed - 1].is_zero() {
-        zeroed -= 1;
+    // let mut zeroed = w.len();
+    // while zeroed > 1 && w[zeroed - 1].is_zero() {
+    //     zeroed -= 1;
+    // }
+    // w.truncate(zeroed);
+    while w.len() > 1 && w[w.len() - 1].is_zero() {
+        w.pop();
     }
-    w.truncate(zeroed);
 }
 
 fn normal_basis_test_polynomial<F>(deg_extension: usize) -> Vec<F>

@@ -1,6 +1,12 @@
+use std::ops::{Add, Mul, Neg, Sub};
+
 use alga::general::Field;
+use num::traits::Zero;
 
 use crate::{Coord, EuclideanDomain, Polynomial};
+
+pub mod fast_mul;
+pub mod schoenhage;
 
 /// Multi-point evaluators of polynomials over a fixed set of points
 pub trait MultipointEvaluator<F> {
@@ -80,6 +86,35 @@ where
     }
     fn eval(&self, f: Polynomial<F>) -> Vec<F> {
         MultiPointEvalTable::eval(self, f)
+    }
+}
+
+pub trait PolynomialLike<T>:
+    EuclideanDomain<usize>
+    + Add<Output = Self>
+    + Mul<Output = Self>
+    + Mul<T, Output = Self>
+    + Sub<Output = Self>
+    + Neg<Output = Self>
+    + Clone
+{
+    fn from_polynomial(p: Polynomial<T>) -> Self;
+    fn into_polynomial(self) -> Polynomial<T>;
+    fn from_vec(p: Vec<T>) -> Self;
+}
+
+impl<F> PolynomialLike<F> for Polynomial<F>
+where
+    F: Clone + Field,
+{
+    fn from_polynomial(p: Polynomial<F>) -> Self {
+        p
+    }
+    fn into_polynomial(self) -> Polynomial<F> {
+        self
+    }
+    fn from_vec(p: Vec<F>) -> Self {
+        Polynomial::new(p)
     }
 }
 

@@ -445,11 +445,8 @@ where
                 *f = r;
             }
             f = Polynomial::from(f_);
-            {
-                x_pow.mul_pow_x(1);
-                let (_, r) = x_pow.div_with_rem(cyclotomic_poly.clone());
-                x_pow = r;
-            }
+            let (_, r) = x_pow.mul_pow_x(1).div_with_rem(cyclotomic_poly.clone());
+            x_pow = r;
         }
         let f: Polynomial<F> = {
             let mut coeffs = vec![];

@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use alga::general::Field;
+use alga::general::{Field, Ring};
 use lazy_static::lazy_static;
 use ndarray::{Array1, Array2, ArrayViewMut, Axis};
 use num::traits::{One, Zero};
@@ -23,7 +23,7 @@ pub struct UnityRoot<F> {
     pub root: F,
 }
 
-impl<F: Field> UnityRoot<F> {
+impl<F: Ring> UnityRoot<F> {
     /// Compute the cyclotomic subgroup of order m in this group
     pub fn subgroup(self, m: usize) -> Self {
         let Self { order, root } = self;
@@ -46,7 +46,7 @@ pub fn cooley_tukey<F>(
     transform2: impl Sync + Fn(Vec<F>) -> Vec<F>,
 ) -> impl Sync + Fn(Vec<F>) -> Vec<F>
 where
-    F: Field + Clone + Send + Sync,
+    F: Ring + Clone + Send + Sync,
 {
     use rayon::prelude::*;
     let n = n1 * n2;
@@ -102,7 +102,7 @@ where
 /// Fourier Transform by definition
 pub fn naive<F>(root: UnityRoot<F>) -> impl Fn(Vec<F>) -> Vec<F>
 where
-    F: Field + Clone + Sync,
+    F: Ring + Clone + Sync,
 {
     move |x: Vec<F>| {
         let n = x.len();
@@ -597,7 +597,7 @@ mod tests {
 
     lazy_static! {
         static ref GF2561D_NORMAL_BASIS_8_CONV: Box<dyn Send + Sync + Fn(&[GF2561D]) -> Vec<GF2561D>> =
-            { ToeplitzConv(8).apply(&crate::facts::GF2561D_SUB_8_NORMAL_BASIS) };
+            ToeplitzConv(8).apply(&crate::facts::GF2561D_SUB_8_NORMAL_BASIS);
     }
 
     #[quickcheck]
