@@ -327,8 +327,9 @@ where
     R: 'static + Ring + RingInvertible + Clone + Send + Sync,
 {
     let n = f.degree() + g.degree();
-    let n = (n + 1)
-        .checked_next_power_of_two()
+    let n = n
+        .checked_add(1)
+        .and_then(usize::checked_next_power_of_two)
         .expect("polynomial too large");
     let level = n.trailing_zeros() as _;
     let mut f = SchoenhageDyadicDomain {

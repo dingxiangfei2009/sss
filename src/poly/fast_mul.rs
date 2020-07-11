@@ -17,6 +17,7 @@ pub trait FastMulMethod<T> {
     fn try_fast_mul_poly(a: &[T], b: &[T]) -> Option<Vec<T>>;
 }
 
+#[derive(Debug)]
 pub struct FastMul<T, M> {
     pub data: Polynomial<T>,
     _p: PhantomData<fn() -> M>,
@@ -28,6 +29,12 @@ impl<T: Clone, M> Clone for FastMul<T, M> {
             data: self.data.clone(),
             _p: PhantomData,
         }
+    }
+}
+
+impl<T: PartialEq, M> PartialEq for FastMul<T, M> {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
     }
 }
 
@@ -225,6 +232,9 @@ where
     }
 }
 
+/// Since 3 is a unit in `GF256`, we can moderately accelerate multiplication
+/// of polynomials of this field
+#[derive(Debug)]
 pub struct GF2561DFastMulMethod;
 
 impl FastMulMethod<GF2561D> for GF2561DFastMulMethod {
@@ -234,5 +244,80 @@ impl FastMulMethod<GF2561D> for GF2561DFastMulMethod {
             Polynomial::new(b.iter().cloned()),
         );
         Some(r)
+    }
+}
+
+pub type GF2561DFastMul = FastMul<GF2561D, GF2561DFastMulMethod>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[quickcheck]
+    fn div_with_rem(a: Vec<GF2561D>, b: Vec<GF2561D>) {
+        let a = GF2561DFastMul::from_vec(a);
+        let b = GF2561DFastMul::from_vec(b);
+        if b.is_zero() {
+            return;
+        }
+        let (q, r) = a.clone().div_with_rem(b.clone());
+        assert_eq!(q * b + r, a);
+    }
+
+    #[test]
+    fn div_with_rem_fixed() {
+        let a = Polynomial(vec![
+            GF2561D(221),
+            GF2561D(249),
+            GF2561D(77),
+            GF2561D(212),
+            GF2561D(158),
+            GF2561D(60),
+            GF2561D(115),
+            GF2561D(185),
+            GF2561D(135),
+            GF2561D(167),
+            GF2561D(124),
+            GF2561D(127),
+            GF2561D(200),
+            GF2561D(138),
+            GF2561D(205),
+            GF2561D(130),
+            GF2561D(111),
+            GF2561D(0),
+            GF2561D(236),
+        ]);
+        let b = Polynomial(vec![
+            GF2561D(49),
+            GF2561D(103),
+            GF2561D(246),
+            GF2561D(7),
+            GF2561D(180),
+            GF2561D(209),
+            GF2561D(126),
+            GF2561D(54),
+            GF2561D(75),
+            GF2561D(153),
+            GF2561D(210),
+            GF2561D(197),
+            GF2561D(131),
+            GF2561D(237),
+            GF2561D(57),
+            GF2561D(229),
+            GF2561D(181),
+            GF2561D(117),
+        ]);
+        let c = GF2561DFastMul::from_polynomial(a.clone());
+        let d = GF2561DFastMul::from_polynomial(b.clone());
+        let (q, r) = c.div_with_rem(d.clone());
+        let m = q.clone() * d;
+        let m = m.into_polynomial();
+        let q = q.into_polynomial();
+        let r = r.into_polynomial();
+        let (q_, r_) = a.div_with_rem(b.clone());
+        let m_ = q_.clone() * b.clone();
+        assert_eq!(m, m_, "q={:?}, b={:?}", q, b);
+        assert_eq!(q, q_);
+        assert_eq!(r, r_);
     }
 }

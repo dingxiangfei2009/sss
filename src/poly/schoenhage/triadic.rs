@@ -505,7 +505,7 @@ where
     let n_ = f.degree() + g.degree();
     let mut n = 2;
     let mut level = 0;
-    while n < n_ {
+    while n <= n_ {
         level += 1;
         n *= 3;
     }
@@ -683,6 +683,33 @@ mod tests {
         let mut g_orig = vec![0; 800];
         OsRng.fill_bytes(&mut g_orig);
         let g_orig = Polynomial::new(g_orig.into_iter().map(|x| GF2561D(x as u8)));
+        let h = schoenhage_triadic_mul(f_orig.clone(), g_orig.clone());
+        assert_eq!(h, f_orig * g_orig);
+    }
+
+    #[test]
+    fn fast_mul_fixed() {
+        let f_orig = Polynomial(vec![GF2561D(236), GF2561D(34)]);
+        let g_orig = Polynomial(vec![
+            GF2561D(49),
+            GF2561D(103),
+            GF2561D(246),
+            GF2561D(7),
+            GF2561D(180),
+            GF2561D(209),
+            GF2561D(126),
+            GF2561D(54),
+            GF2561D(75),
+            GF2561D(153),
+            GF2561D(210),
+            GF2561D(197),
+            GF2561D(131),
+            GF2561D(237),
+            GF2561D(57),
+            GF2561D(229),
+            GF2561D(181),
+            GF2561D(117),
+        ]);
         let h = schoenhage_triadic_mul(f_orig.clone(), g_orig.clone());
         assert_eq!(h, f_orig * g_orig);
     }
