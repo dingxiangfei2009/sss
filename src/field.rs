@@ -282,7 +282,7 @@ pub const ONE: GF2561D = GF2561D(1);
 
 pub struct Tables {
     pub exp: [u8; 256],
-    pub log: [u8; 256],
+    pub log: [usize; 256],
 }
 
 pub static TABLES: Tables = Tables {
@@ -349,9 +349,9 @@ impl AbstractMagma<Multiplicative> for GF2561D {
             (GF2561D(0), GF2561D(_)) => GF2561D(0),
             (GF2561D(_), GF2561D(0)) => GF2561D(0),
             (GF2561D(left), GF2561D(right)) => {
-                let log = TABLES.log[left as usize] as u16 + TABLES.log[right as usize] as u16;
+                let log = TABLES.log[left as usize] + TABLES.log[right as usize];
                 let log = if log < 255 { log } else { log - 255 };
-                GF2561D(TABLES.exp[log as usize])
+                GF2561D(TABLES.exp[log])
             }
         }
     }
@@ -372,7 +372,7 @@ impl TwoSidedInverse<Multiplicative> for GF2561D {
             GF2561D(1) => GF2561D(1),
             GF2561D(x) => {
                 let log = 255 - TABLES.log[x as usize];
-                GF2561D(TABLES.exp[log as usize])
+                GF2561D(TABLES.exp[log])
             }
         }
     }
