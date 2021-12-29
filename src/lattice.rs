@@ -940,13 +940,14 @@ impl SigningKey {
             let p = p.clone();
             let k = k.clone();
             let k_2_plus_1: Integer = k.clone() * 2 + 1;
+            let uncompressed = &mut uncompressed;
             move |i| {
                 let mut y = y[i].inner().0.clone();
                 if y > p_mid {
                     y -= &p
                 }
                 if y.clone().abs() > p_mid.clone() - k.clone() {
-                    uncompressed += 1;
+                    *uncompressed += 1;
                     z[i].clone()
                 } else {
                     let (mut q, mut r) = y.div_rem_euc(k_2_plus_1.clone());

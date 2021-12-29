@@ -277,7 +277,7 @@ where
             }
         }
         let mut data = Self {
-            data: data,
+            data,
             level: LevelData::Undetermined,
         };
         data.reduce(level);

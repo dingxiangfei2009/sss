@@ -5,6 +5,9 @@ authors = ["Ding Xiang Fei <dingxiangfei2009@gmail.com>"]
 edition = "2018"
 license = "MIT OR Apache-2.0"
 
+[features]
+lattice = ["rug", "gmp-mpfr-sys"]
+
 [dependencies]
 alga = "0.9.1"
 alga_derive = "0.9.1"
@@ -34,8 +37,14 @@ version = "1.0"
 features = ["derive"]
 
 [dependencies.rug]
-version = "1.6.0"
+version = "1.10.0"
 features = ["serde"]
+optional = true
+
+[dependencies.gmp-mpfr-sys]
+version = "1.3.0"
+features = ["force-cross"]
+optional = true
 
 [dependencies.ndarray]
 version = "0.13.0"
