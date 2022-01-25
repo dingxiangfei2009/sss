@@ -1,6 +1,7 @@
 use super::*;
 
 use crate::{int_inj, tests::Frac};
+use quickcheck::{quickcheck, TestResult};
 
 #[test]
 fn taylor_exp() {
@@ -66,22 +67,25 @@ fn u16_to_gf65536n(xs: Vec<u16>) -> Vec<GF65536N> {
         .collect()
 }
 
-#[quickcheck]
-fn vz_gathen(mut points: Vec<u16>, f: Vec<u16>) {
-    points.sort();
-    points.dedup();
-    if points.len() > core::u16::MAX as usize {
-        return;
-    }
-    if f.len() > core::u16::MAX as usize {
-        return;
-    }
-    let points = u16_to_gf65536n(points);
-    let f = Polynomial::new(u16_to_gf65536n(f));
-    let result = MEVZG_GF65536N.eval(f.clone(), points.clone());
-    assert_eq!(result.len(), points.len());
-    for (r, p) in result.iter().zip(&points) {
-        assert_eq!(r, &f.clone().eval_at(p.clone()).1);
+quickcheck! {
+    fn vz_gathen(points: Vec<u16>, f: Vec<u16>) -> TestResult {
+        let mut points = points;
+        points.sort();
+        points.dedup();
+        if points.len() > core::u16::MAX as usize {
+            return TestResult::discard();
+        }
+        if f.len() > core::u16::MAX as usize {
+            return TestResult::discard();
+        }
+        let points = u16_to_gf65536n(points);
+        let f = Polynomial::new(u16_to_gf65536n(f));
+        let result = MEVZG_GF65536N.eval(f.clone(), points.clone());
+        assert_eq!(result.len(), points.len());
+        for (r, p) in result.iter().zip(&points) {
+            assert_eq!(r, &f.clone().eval_at(p.clone()).1);
+        }
+        TestResult::passed()
     }
 }
 

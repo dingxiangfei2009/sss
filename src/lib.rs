@@ -1,8 +1,4 @@
-#![type_length_limit = "3000000"]
-
-#[cfg(test)]
-#[macro_use(quickcheck)]
-extern crate quickcheck_macros;
+//#![type_length_limit = "3000000"]
 
 #[macro_use]
 extern crate derive_more;

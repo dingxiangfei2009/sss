@@ -1,33 +1,36 @@
 use super::*;
 
 use crate::field::{GF2561D, GF2561D_NORMAL_BASIS};
+use quickcheck::quickcheck;
 
-#[quickcheck]
-fn it_works(mut u: Vec<GF2561D>) {
-    if u.len() == 0 {
-        u = vec![GF2561D(0)];
+quickcheck! {
+    fn it_works(u: Vec<GF2561D>) -> bool {
+        let mut u = u;
+        if u.len() == 0 {
+            u = vec![GF2561D(0)];
+        }
+        if u.len() > 254 {
+            u = u.drain(0..254).collect();
+        }
+        truncate_high_degree_zeros(&mut u);
+        let threshold = u.len();
+        let p = Polynomial(u.clone());
+
+        let q: Vec<_> = (1u8..=u.len() as u8 + 1)
+            .map(GF2561D)
+            .map(|x| p.eval_at(x))
+            .take(threshold)
+            .collect();
+        let r = Polynomial::from_coords(q.as_slice());
+        assert_eq!(u[..], r.0[..]);
+
+        let q: Vec<_> = (1u8..=u.len() as u8 + 1)
+            .map(GF2561D)
+            .map(|x| p.eval_at(x))
+            .collect();
+        let r = Polynomial::from_coords(q.as_slice());
+        u[..] == r.0[..]
     }
-    if u.len() > 254 {
-        u = u.drain(0..254).collect();
-    }
-    truncate_high_degree_zeros(&mut u);
-    let threshold = u.len();
-    let p = Polynomial(u.clone());
-
-    let q: Vec<_> = (1u8..=u.len() as u8 + 1)
-        .map(GF2561D)
-        .map(|x| p.eval_at(x))
-        .take(threshold)
-        .collect();
-    let r = Polynomial::from_coords(q.as_slice());
-    assert_eq!(u.as_slice(), r.0.as_slice());
-
-    let q: Vec<_> = (1u8..=u.len() as u8 + 1)
-        .map(GF2561D)
-        .map(|x| p.eval_at(x))
-        .collect();
-    let r = Polynomial::from_coords(q.as_slice());
-    assert_eq!(u.as_slice(), r.0.as_slice());
 }
 
 use alga::general::{AbstractMagma, Additive, Identity, Multiplicative, TwoSidedInverse};
@@ -71,7 +74,7 @@ impl<T> Arbitrary for Polynomial<T>
 where
     T: Zero + Arbitrary,
 {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+    fn arbitrary(g: &mut Gen) -> Self {
         Polynomial::new(<Vec<T> as Arbitrary>::arbitrary(g))
     }
 }
@@ -87,7 +90,7 @@ impl F7 {
 }
 
 impl quickcheck::Arbitrary for F7 {
-    fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+    fn arbitrary(g: &mut Gen) -> Self {
         Self::new(u8::arbitrary(g))
     }
 }
@@ -240,7 +243,7 @@ impl Neg for F7 {
 pub struct Frac(pub BigRational);
 
 impl Arbitrary for Frac {
-    fn arbitrary<G: Gen>(g: &mut G) -> Self {
+    fn arbitrary(g: &mut Gen) -> Self {
         Frac(BigRational::new(
             u64::arbitrary(g).into(),
             std::cmp::max(1, u64::arbitrary(g)).into(),
@@ -376,42 +379,46 @@ fn error_correction3() {
     assert_eq!((p, vec![0]), error_correct(&c, 5).unwrap());
 }
 
-#[quickcheck]
-fn error_correction_quickcheck(mut u: Vec<GF2561D>, mut replaces: Vec<(usize, GF2561D)>) {
-    if u.len() == 0 {
-        u = vec![Zero::zero()];
+quickcheck! {
+    fn error_correction_quickcheck(u: Vec<GF2561D>, replaces: Vec<(usize, GF2561D)>) -> bool {
+        let mut u = u;
+        let mut replaces = replaces;
+        if u.len() == 0 {
+            u = vec![Zero::zero()];
+        }
+        if u.len() > 253 {
+            u = u.drain(0..253).collect();
+        }
+        truncate_high_degree_zeros(&mut u);
+        let threshold = u.len();
+        let p = Polynomial(u.clone());
+        replaces = replaces
+            .drain(0..std::cmp::min((255 - threshold) / 2, replaces.len()))
+            .filter(|(_, s)| !s.is_zero())
+            .collect();
+        let mut q: Vec<_> = (1..=255)
+            .map(GF2561D)
+            .map(|x| p.eval_at(x))
+            .take(threshold + 2 * replaces.len())
+            .collect();
+        for (replace, _) in replaces.iter_mut() {
+            *replace %= q.len();
+        }
+        replaces.sort_by_key(|(r, _)| *r);
+        replaces.dedup_by_key(|(r, _)| *r);
+        for (replace, with) in replaces.iter() {
+            q[*replace].1 += *with;
+        }
+        eprintln!("correcting {:?}", q);
+        let (p_, e) = error_correct(&q, threshold).unwrap();
+        assert_eq!(p, p_, "wrong decoding");
+        assert_eq!(
+            replaces.iter().map(|(r, _)| *r).collect::<Vec<_>>(),
+            e,
+            "wrong syndromes"
+        );
+        true
     }
-    if u.len() > 253 {
-        u = u.drain(0..253).collect();
-    }
-    truncate_high_degree_zeros(&mut u);
-    let threshold = u.len();
-    let p = Polynomial(u.clone());
-    replaces = replaces
-        .drain(0..std::cmp::min((255 - threshold) / 2, replaces.len()))
-        .filter(|(_, s)| !s.is_zero())
-        .collect();
-    let mut q: Vec<_> = (1..=255)
-        .map(GF2561D)
-        .map(|x| p.eval_at(x))
-        .take(threshold + 2 * replaces.len())
-        .collect();
-    for (replace, _) in replaces.iter_mut() {
-        *replace %= q.len();
-    }
-    replaces.sort_by_key(|(r, _)| *r);
-    replaces.dedup_by_key(|(r, _)| *r);
-    for (replace, with) in replaces.iter() {
-        q[*replace].1 += *with;
-    }
-    eprintln!("correcting {:?}", q);
-    let (p_, e) = error_correct(&q, threshold).unwrap();
-    assert_eq!(p, p_, "wrong decoding");
-    assert_eq!(
-        replaces.iter().map(|(r, _)| *r).collect::<Vec<_>>(),
-        e,
-        "wrong syndromes"
-    );
 }
 
 #[test]
@@ -458,12 +465,17 @@ fn gf2561d_gamma_is_normal_basis() {
     }
 }
 
-#[quickcheck]
-fn gcd(a: u32, b: u32) {
-    let d = u32::gcd(a, b);
-    eprintln!("({}, {})={}", a, b, d);
-    assert_eq!(a % d, 0);
-    assert_eq!(b % d, 0);
+quickcheck! {
+    fn gcd(a: u32, b: u32) -> TestResult {
+        if b == 0 {
+            return TestResult::discard();
+        }
+        let d = u32::gcd(a, b);
+        eprintln!("({}, {})={}", a, b, d);
+        assert_eq!(a % d, 0);
+        assert_eq!(b % d, 0);
+        TestResult::passed()
+    }
 }
 
 #[test]
@@ -644,18 +656,19 @@ fn usize_euclid() {
     assert_eq!(r, 2);
 }
 
-#[quickcheck]
-fn poly_div(a: Polynomial<Frac>, b: Polynomial<Frac>) -> TestResult {
-    if b.is_zero() || a.degree() < b.degree() {
-        return TestResult::discard();
+quickcheck! {
+    fn poly_div(a: Polynomial<Frac>, b: Polynomial<Frac>) -> TestResult {
+        if b.is_zero() || a.degree() < b.degree() {
+            return TestResult::discard();
+        }
+        let s = a.clone();
+        let t = b.clone();
+        let (expected_q, expected_r) = naive_poly_div_with_rem(a, b);
+        let (actual_q, actual_r) = s.div_with_rem(t);
+        assert_eq!(actual_q, expected_q);
+        assert_eq!(actual_r, expected_r);
+        TestResult::passed()
     }
-    let s = a.clone();
-    let t = b.clone();
-    let (expected_q, expected_r) = naive_poly_div_with_rem(a, b);
-    let (actual_q, actual_r) = s.div_with_rem(t);
-    assert_eq!(actual_q, expected_q);
-    assert_eq!(actual_r, expected_r);
-    TestResult::passed()
 }
 
 #[test]

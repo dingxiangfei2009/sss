@@ -125,10 +125,13 @@ mod tests {
     use super::*;
 
     use crate::tests::F7;
+    use quickcheck::quickcheck;
 
-    #[quickcheck]
-    fn berlekamp_massey_tests(s: Vec<F7>) {
-        check(berlekamp_massey(&s), &s);
+    quickcheck! {
+        fn berlekamp_massey_tests(s: Vec<F7>) -> bool {
+            check(berlekamp_massey(&s), &s);
+            true
+        }
     }
 
     fn check<F: Field + std::fmt::Debug>(lfsr: LFSR<F>, s: &[F]) {

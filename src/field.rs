@@ -1046,29 +1046,28 @@ mod tests {
 
     use alga::general::{AbstractGroupAbelian, AbstractQuasigroup, AbstractRing};
 
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
 
     impl Arbitrary for GF2561D {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             GF2561D(u8::arbitrary(g))
         }
     }
 
-    #[quickcheck]
-    fn prop_mul_and_add_are_distributive(args: (GF2561D, GF2561D, GF2561D)) -> bool {
-        GF2561D::prop_mul_and_add_are_distributive(args)
-    }
+    quickcheck! {
+        fn prop_mul_and_add_are_distributive(args: (GF2561D, GF2561D, GF2561D)) -> bool {
+            GF2561D::prop_mul_and_add_are_distributive(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_is_commutative(args: (GF2561D, GF2561D)) -> bool {
-        <GF2561D as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
-    }
+        fn prop_mul_is_commutative(args: (GF2561D, GF2561D)) -> bool {
+            <GF2561D as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_inv_is_latin_square(args: (GF2561D, GF2561D)) -> bool {
-        args.0.is_zero()
-            || args.1.is_zero()
-            || <GF2561D as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+        fn prop_mul_inv_is_latin_square(args: (GF2561D, GF2561D)) -> bool {
+            args.0.is_zero()
+                || args.1.is_zero()
+                || <GF2561D as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+        }
     }
 
     impl<P, V, D> Arbitrary for Fp<P, V, D>
@@ -1077,7 +1076,7 @@ mod tests {
         V: 'static + Ord + Clone + Send + Sync + Arbitrary + EuclideanDomain<D>,
         D: 'static + Ord,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             Fp::new(V::arbitrary(g))
         }
     }

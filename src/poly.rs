@@ -123,8 +123,15 @@ mod tests {
     use super::*;
 
     use crate::field::GF2561D;
+    use quickcheck::quickcheck;
 
-    #[quickcheck]
+    quickcheck! {
+        fn multipoint_eval_prop(p: Polynomial<GF2561D>, t: Vec<u8>) -> bool {
+            multipoint_eval(p, t);
+            true
+        }
+    }
+
     fn multipoint_eval(p: Polynomial<GF2561D>, mut t: Vec<u8>) {
         t.sort();
         t.dedup();

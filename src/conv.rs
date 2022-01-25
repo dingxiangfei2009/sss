@@ -613,7 +613,7 @@ mod tests {
 
     use std::{cmp::PartialEq, fmt::Display};
 
-    use quickcheck::{Arbitrary, Gen, StdThreadGen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
 
     use crate::{
         field::GF2561D,
@@ -628,36 +628,37 @@ mod tests {
         y
     }
 
-    #[quickcheck]
-    fn wu2012_lemma4_5(n: usize) {
-        let n = n % 512 + 1;
-        let (_, e) = toeplitz_e(n);
-        let (_, _, h) = toeplitz_gh::<F7>(n);
-        let y = mat_y(n);
-        assert_eq!(e, h.dot(&y).t());
-        assert!(h.axis_iter(Axis(0)).all(|r| !r.iter().all(|h| *h == 0)));
-        let y_ = Array2::from_shape_vec(
-            (n, n),
-            h.axis_iter(Axis(0))
-                .filter(|r| r.iter().filter(|h| **h != 0).count() == 1)
-                .flat_map(|r| r.to_vec())
-                .collect(),
-        )
-        .unwrap();
-        assert_eq!(y_, mat_y(n));
-    }
+    quickcheck! {
+        fn wu2012_lemma4_5(n: usize) -> bool {
+            let n = n % 512 + 1;
+            let (_, e) = toeplitz_e(n);
+            let (_, _, h) = toeplitz_gh::<F7>(n);
+            let y = mat_y(n);
+            assert_eq!(e, h.dot(&y).t());
+            assert!(h.axis_iter(Axis(0)).all(|r| !r.iter().all(|h| *h == 0)));
+            let y_ = Array2::from_shape_vec(
+                (n, n),
+                h.axis_iter(Axis(0))
+                    .filter(|r| r.iter().filter(|h| **h != 0).count() == 1)
+                    .flat_map(|r| r.to_vec())
+                    .collect(),
+            )
+            .unwrap();
+            y_ == mat_y(n)
+        }
 
-    #[quickcheck]
-    fn wu2012_lemma6(n: usize) {
-        let n = n % 512 + 1;
-        let (_, e) = toeplitz_e(n);
-        assert!(e.axis_iter(Axis(1)).all(|c| !c.iter().all(|e| *e == 0)));
+        fn wu2012_lemma6(n: usize) -> bool {
+            let n = n % 512 + 1;
+            let (_, e) = toeplitz_e(n);
+            assert!(e.axis_iter(Axis(1)).all(|c| !c.iter().all(|e| *e == 0)));
+            true
+        }
     }
 
     #[test]
     fn matrix_mul() {
         for _ in 0..100 {
-            let mut g = StdThreadGen::new(usize::max_value());
+            let mut g = Gen::new(usize::max_value());
             let n = usize::arbitrary(&mut g) % 100 + 1;
             let m = usize::arbitrary(&mut g) % 100 + 1;
             let p = usize::arbitrary(&mut g) % 100 + 1;
@@ -704,10 +705,9 @@ mod tests {
     }
 
     #[allow(clippy::many_single_char_names)] // REASON: match up with symbols in the wu2012 paper
-    fn toeplitz_test<F, G>(g: &mut G)
+    fn toeplitz_test<F>(g: &mut Gen)
     where
         F: PartialEq + Display + Arbitrary + Zero + One + Clone + Sub<Output = F> + Neg<Output = F>,
-        G: Gen,
     {
         let n = u8::arbitrary(g) as usize + 1;
         eprintln!("size n={}", n);
@@ -736,16 +736,15 @@ mod tests {
 
     #[test]
     fn toeplitz() {
-        let mut g = StdThreadGen::new(usize::max_value());
-        for i in 0..100 {
-            eprintln!("test {}", i);
-            toeplitz_test::<GF2561D, _>(&mut g)
+        let mut g = Gen::new(usize::max_value());
+        for _ in 0..100 {
+            toeplitz_test::<GF2561D>(&mut g)
         }
     }
 
     #[test]
     fn agarwal_cooley() {
-        let mut g = StdThreadGen::new(usize::max_value());
+        let mut g = Gen::new(usize::max_value());
         type F = F7;
         for i in 2..20 {
             eprintln!("i={}", i);
@@ -768,7 +767,7 @@ mod tests {
     #[test]
     fn agarwal_cooley_fix_x() {
         type F = GF2561D;
-        let mut g = StdThreadGen::new(usize::max_value());
+        let mut g = Gen::new(usize::max_value());
         let n1 = 3;
         let n2 = 5;
         let n = n1 * n2;

@@ -222,15 +222,11 @@ where
             1,
             &self.root,
         );
-        let fft = (self.fft)(
+        let fft = (self.fft)({
+            let mut err_locator = err_locator.into_polynomial().0;
+            err_locator.resize_with(self.root.order, F::zero);
             err_locator
-                .into_polynomial()
-                .0
-                .into_iter()
-                .chain(repeat(F::zero()))
-                .take(self.root.order)
-                .collect(),
-        );
+        });
 
         let mut error_positions = BTreeSet::new();
         for location in
@@ -272,6 +268,7 @@ mod tests {
 
     use lazy_static::lazy_static;
     use num::traits::Zero;
+    use quickcheck::quickcheck;
 
     use crate::{
         field::GF2561D,
@@ -350,7 +347,18 @@ mod tests {
         assert_eq!(input, &*data);
     }
 
-    #[quickcheck]
+    quickcheck! {
+        fn encode_decode_error_erasure_prop(
+            input: Vec<GF2561D>,
+            error: Vec<(u8, GF2561D)>,
+            erasure: Vec<u8>
+        ) -> bool
+        {
+            encode_decode_error_erasure(input, error, erasure);
+            true
+        }
+    }
+
     fn encode_decode_error_erasure(
         input: Vec<GF2561D>,
         error: Vec<(u8, GF2561D)>,
@@ -393,7 +401,17 @@ mod tests {
         assert_eq!(input, &*output);
     }
 
-    #[quickcheck]
+    quickcheck! {
+        fn encode_decode_error_erasure_fast_prop(
+            input: Vec<GF2561D>,
+            error: Vec<(u8, GF2561D)>,
+            erasure: Vec<u8>
+        ) -> bool {
+            encode_decode_error_erasure_fast(input, error, erasure);
+            true
+        }
+    }
+
     fn encode_decode_error_erasure_fast(
         input: Vec<GF2561D>,
         error: Vec<(u8, GF2561D)>,

@@ -408,7 +408,7 @@ fn sample<R: RngCore + CryptoRng, T: Clone>(
         while i < *n {
             let val = convert(i.clone());
             if admissible(val.clone()) {
-                v[rng.gen_range(0, k)] = val;
+                v[rng.gen_range(0..k)] = val;
                 w *= (rng.gen::<f64>().ln() / (k as f64)).exp();
                 break;
             } else {

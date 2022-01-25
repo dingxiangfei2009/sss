@@ -1347,14 +1347,14 @@ mod tests {
 mod gf65536p_tests {
     use super::*;
 
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
 
     impl<F, P> Arbitrary for PolynomialExtension<F, P>
     where
         F: Arbitrary + FiniteField,
         P: MonicPolynomial<F> + 'static,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             Self {
                 data: Polynomial::new((0..P::degree()).map(|_| F::arbitrary(g))),
                 _p: PhantomData,
@@ -1362,21 +1362,20 @@ mod gf65536p_tests {
         }
     }
 
-    #[quickcheck]
-    fn prop_mul_and_add_are_distributive(args: (GF65536P, GF65536P, GF65536P)) -> bool {
-        GF65536P::prop_mul_and_add_are_distributive(args)
-    }
+    quickcheck! {
+        fn prop_mul_and_add_are_distributive(args: (GF65536P, GF65536P, GF65536P)) -> bool {
+            GF65536P::prop_mul_and_add_are_distributive(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_is_commutative(args: (GF65536P, GF65536P)) -> bool {
-        <GF65536P as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
-    }
+        fn prop_mul_is_commutative(args: (GF65536P, GF65536P)) -> bool {
+            <GF65536P as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_inv_is_latin_square(args: (GF65536P, GF65536P)) -> bool {
-        args.0.is_zero()
-            || args.1.is_zero()
-            || <GF65536P as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+        fn prop_mul_inv_is_latin_square(args: (GF65536P, GF65536P)) -> bool {
+            args.0.is_zero()
+                || args.1.is_zero()
+                || <GF65536P as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square(args)
+        }
     }
 }
 
@@ -1466,40 +1465,40 @@ pub type GF65536NTower = FiniteExtensionTower<
 mod gf65536n_tests {
     use super::*;
 
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
 
     impl<F, B> Arbitrary for NormalBasisExtension<F, B>
     where
         F: Arbitrary + FiniteField,
         B: NormalBasis<F> + 'static,
     {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             Self::new((0..B::degree_extension()).map(|_| F::arbitrary(g)))
         }
     }
 
-    #[quickcheck]
-    fn prop_mul_and_add_are_distributive(args: (GF65536N, GF65536N, GF65536N)) -> bool {
-        GF65536N::prop_mul_and_add_are_distributive(args)
-    }
+    quickcheck! {
+        fn prop_mul_and_add_are_distributive(args: (GF65536N, GF65536N, GF65536N)) -> bool {
+            GF65536N::prop_mul_and_add_are_distributive(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_is_commutative(args: (GF65536N, GF65536N)) -> bool {
-        <GF65536N as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
-    }
+        fn prop_mul_is_commutative(args: (GF65536N, GF65536N)) -> bool {
+            <GF65536N as AbstractGroupAbelian<Multiplicative>>::prop_is_commutative(args)
+        }
 
-    #[quickcheck]
-    fn prop_mul_inv_is_latin_square((a, b): (GF65536N, GF65536N)) -> bool {
-        println!("testing {:?} {:?}", a, b);
-        a.is_zero()
-            || b.is_zero()
-            || <GF65536N as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square((a, b))
-    }
+        fn prop_mul_inv_is_latin_square(pair: (GF65536N, GF65536N)) -> bool {
+            let (a, b) = pair;
+            println!("testing {:?} {:?}", a, b);
+            a.is_zero()
+                || b.is_zero()
+                || <GF65536N as AbstractQuasigroup<Multiplicative>>::prop_inv_is_latin_square((a, b))
+        }
 
-    #[quickcheck]
-    fn prop_proper_field((a, b): (GF65536N, GF65536N)) -> bool {
-        println!("testing {:?} {:?}", a, b);
-        a.is_zero() || b.is_zero() || !(a * b).is_zero()
+        fn prop_proper_field(pair: (GF65536N, GF65536N)) -> bool {
+            let (a, b) = pair;
+            println!("testing {:?} {:?}", a, b);
+            a.is_zero() || b.is_zero() || !(a * b).is_zero()
+        }
     }
 
     #[test]

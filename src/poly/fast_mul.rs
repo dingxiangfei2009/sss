@@ -253,15 +253,18 @@ pub type GF2561DFastMul = FastMul<GF2561D, GF2561DFastMulMethod>;
 mod tests {
     use super::*;
 
-    #[quickcheck]
-    fn div_with_rem(a: Vec<GF2561D>, b: Vec<GF2561D>) {
-        let a = GF2561DFastMul::from_vec(a);
-        let b = GF2561DFastMul::from_vec(b);
-        if b.is_zero() {
-            return;
+    use quickcheck::{quickcheck, TestResult};
+
+    quickcheck! {
+        fn div_with_rem(a: Vec<GF2561D>, b: Vec<GF2561D>) -> TestResult {
+            let a = GF2561DFastMul::from_vec(a);
+            let b = GF2561DFastMul::from_vec(b);
+            if b.is_zero() {
+                return TestResult::discard();
+            }
+            let (q, r) = a.clone().div_with_rem(b.clone());
+            TestResult::from_bool(q * b + r == a)
         }
-        let (q, r) = a.clone().div_with_rem(b.clone());
-        assert_eq!(q * b + r, a);
     }
 
     #[test]

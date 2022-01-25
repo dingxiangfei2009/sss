@@ -372,7 +372,7 @@ mod tests {
     use std::{collections::HashMap, pin::Pin, sync::Arc};
 
     use num::traits::One;
-    use quickcheck::{Arbitrary, Gen, TestResult, Testable};
+    use quickcheck::{quickcheck, Arbitrary, Gen, TestResult, Testable};
 
     use crate::linalg::solve;
 
@@ -507,11 +507,12 @@ mod tests {
 
     #[test]
     fn fourier_255_quickcheck() {
-        let mut quickcheck = quickcheck::QuickCheck::with_gen(quickcheck::StdThreadGen::new(1024))
+        let mut quickcheck = quickcheck::QuickCheck::new()
+            .gen(Gen::new(1024))
             .min_tests_passed(100);
         struct Test;
         impl Testable for Test {
-            fn result<G: Gen>(&self, g: &mut G) -> TestResult {
+            fn result(&self, g: &mut Gen) -> TestResult {
                 let x: Vec<_> = <_>::arbitrary(g);
                 if x.len() < 255 {
                     TestResult::discard()
@@ -572,11 +573,12 @@ mod tests {
 
     #[test]
     fn fourier_255_cooley_tukey_quickcheck() {
-        let mut quickcheck = quickcheck::QuickCheck::with_gen(quickcheck::StdThreadGen::new(1024))
+        let mut quickcheck = quickcheck::QuickCheck::new()
+            .gen(quickcheck::Gen::new(1024))
             .min_tests_passed(100);
         struct Test;
         impl Testable for Test {
-            fn result<G: Gen>(&self, g: &mut G) -> TestResult {
+            fn result(&self, g: &mut Gen) -> TestResult {
                 let x: Vec<_> = <_>::arbitrary(g);
                 if x.len() < 255 {
                     TestResult::discard()
@@ -600,7 +602,21 @@ mod tests {
             ToeplitzConv(8).apply(&crate::facts::GF2561D_SUB_8_NORMAL_BASIS);
     }
 
-    #[quickcheck]
+    quickcheck! {
+       fn circulant_mat_mul_is_conv8_prop(x: (
+            GF2561D,
+            GF2561D,
+            GF2561D,
+            GF2561D,
+            GF2561D,
+            GF2561D,
+            GF2561D,
+            GF2561D,
+        )) -> bool {
+            circulant_mat_mul_is_conv8(x);
+            true
+        }
+    }
     fn circulant_mat_mul_is_conv8(
         x: (
             GF2561D,

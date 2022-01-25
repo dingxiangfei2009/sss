@@ -933,43 +933,46 @@ impl SigningKey {
     fn compress(y: Poly, z: Poly, k: Integer) -> Option<Poly> {
         let mut uncompressed = 0usize;
         let p = <Prime273_72 as PrimeModulo<Int>>::divisor().0;
-        let p_mid: Integer = (p.clone() - 1) / 2;
+        let p_mid: Integer = (p.clone() - 1u8) / 2u8;
         let pos_k: F = int_inj(Int(k.clone()));
         let neg_k = -pos_k.clone();
         let z_ = generate_poly({
             let p = p.clone();
             let k = k.clone();
-            let k_2_plus_1: Integer = k.clone() * 2 + 1;
-            move |i| {
-                let mut y = y[i].inner().0.clone();
-                if y > p_mid {
-                    y -= &p
-                }
-                if y.clone().abs() > p_mid.clone() - k.clone() {
-                    uncompressed += 1;
-                    z[i].clone()
-                } else {
-                    let (mut q, mut r) = y.div_rem_euc(k_2_plus_1.clone());
-                    if r > k {
-                        q += 1;
-                        r -= k_2_plus_1.clone();
+            let k_2_plus_1: Integer = k.clone() * 2u8 + 1u8;
+            {
+                let uncompressed = &mut uncompressed;
+                move |i| {
+                    let mut y = y[i].inner().0.clone();
+                    if y > p_mid {
+                        y -= &p
                     }
-                    let mut z = z[i].inner().0.clone();
-                    if z > p_mid {
-                        z -= &p
-                    }
-                    let test = r + z;
-                    if test > k {
-                        pos_k.clone()
-                    } else if test < -k.clone() {
-                        neg_k.clone()
+                    if y.clone().abs() > p_mid.clone() - k.clone() {
+                        *uncompressed += 1;
+                        z[i].clone()
                     } else {
-                        F::zero()
+                        let (mut q, mut r) = y.div_rem_euc(k_2_plus_1.clone());
+                        if r > k {
+                            q += 1;
+                            r -= k_2_plus_1.clone();
+                        }
+                        let mut z = z[i].inner().0.clone();
+                        if z > p_mid {
+                            z -= &p
+                        }
+                        let test = r + z;
+                        if test > k {
+                            pos_k.clone()
+                        } else if test < -k.clone() {
+                            neg_k.clone()
+                        } else {
+                            F::zero()
+                        }
                     }
                 }
             }
         });
-        if Integer::from(uncompressed) * p < Integer::from(6) * k * Integer::from(KEY_SIZE) {
+        if Integer::from(uncompressed as u64) * p < Integer::from(6) * k * Integer::from(KEY_SIZE) {
             Some(z_)
         } else {
             None
@@ -1060,7 +1063,7 @@ impl SigningKey {
 mod tests {
     use super::*;
 
-    use quickcheck::{Arbitrary, Gen};
+    use quickcheck::{quickcheck, Arbitrary, Gen};
     use rand::rngs::StdRng;
     use sha2::{Digest, Sha256};
 
@@ -1153,13 +1156,13 @@ mod tests {
     struct P(Poly);
 
     impl Arbitrary for Int {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
-            Int(Integer::from(g.next_u64()))
+        fn arbitrary(g: &mut Gen) -> Self {
+            Int(Integer::from(u64::arbitrary(g)))
         }
     }
 
     impl Arbitrary for P {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             P(vec_to_poly(
                 (0..KEY_SIZE)
                     .map(|_| <F as Arbitrary>::arbitrary(g))
@@ -1184,24 +1187,26 @@ mod tests {
         }
     }
 
-    #[quickcheck]
-    #[ignore]
-    fn poly_mul_mod_test(P(a): P, P(b): P) {
-        let c_actual = P(poly_mul_mod(a.clone(), b.clone()));
+    quickcheck! {
+        fn poly_mul_mod_test(a: P, b: P) -> bool {
+            let P(a) = a;
+            let P(b) = b;
+            let c_actual = P(poly_mul_mod(a.clone(), b.clone()));
 
-        let a = Polynomial::new(a.to_vec());
-        let b = Polynomial::new(b.to_vec());
-        let c = a * b;
-        let m = Polynomial::new(
-            Some(F::one())
-                .into_iter()
-                .chain(repeat_with(F::zero).take(KEY_SIZE - 1))
-                .chain(Some(F::one())),
-        );
-        let (_, Polynomial(c_expected)) = c.div_with_rem(m);
-        let c_expected = P(vec_to_poly(c_expected));
+            let a = Polynomial::new(a.to_vec());
+            let b = Polynomial::new(b.to_vec());
+            let c = a * b;
+            let m = Polynomial::new(
+                Some(F::one())
+                    .into_iter()
+                    .chain(repeat_with(F::zero).take(KEY_SIZE - 1))
+                    .chain(Some(F::one())),
+            );
+            let (_, Polynomial(c_expected)) = c.div_with_rem(m);
+            let c_expected = P(vec_to_poly(c_expected));
 
-        assert_eq!(c_actual, c_expected);
+            c_actual == c_expected
+        }
     }
 
     #[test]
@@ -1226,11 +1231,13 @@ mod tests {
         assert!(verify_key.verify(data, signature, &init, h))
     }
 
-    #[quickcheck]
-    fn from_into_coeff_bytes(P(p): P) {
-        let p = SessionKeyPart(p);
-        let bytes = p.into_coeff_bytes();
-        let q = SessionKeyPart::from_coeff_bytes(bytes).unwrap();
-        assert_eq!(p.0, q.0);
+    quickcheck! {
+        fn from_into_coeff_bytes(p: P) -> bool {
+            let P(p) = p;
+            let p = SessionKeyPart(p);
+            let bytes = p.into_coeff_bytes();
+            let q = SessionKeyPart::from_coeff_bytes(bytes).unwrap();
+            p.0 == q.0
+        }
     }
 }

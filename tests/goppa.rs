@@ -67,7 +67,7 @@ fn mceliece() {
     let pk = McElieceKEM65536PublicKey::new(enc);
 
     for i in 0..9 {
-        let (session_key, ctxt) = pk.encapsulate::<blake2::Blake2b, _>(&mut OsRng);
+        let (session_key, ctxt) = pk.encapsulate::<blake2::Blake2b512, _>(&mut OsRng);
         let session_key_ = sk.decapsulate(ctxt);
         assert_eq!(session_key.0, session_key_.0);
         eprintln!("{}", i)
