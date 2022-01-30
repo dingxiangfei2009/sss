@@ -7,7 +7,7 @@ use std::{
     cmp::max,
     fmt::{Display, Formatter, Result as FmtResult},
     iter::repeat_with,
-    mem::swap,
+    mem::{replace, swap},
     ops::{Add, BitAnd, Div, DivAssign, Mul, MulAssign, Neg, Shr, Sub},
 };
 
@@ -302,7 +302,7 @@ where
     }
 
     fn div_with_rem(self, other: Self) -> (Self, Self) {
-        Polynomial::div(self, other)
+        Polynomial::divide_by(self, other)
     }
 }
 
@@ -367,9 +367,8 @@ where
         g
     }
 
-    #[allow(clippy::should_implement_trait)] // REASON: it is not sensible to impl std::ops::Div if data like Polynomial is not a field element
     /// Dividing with another polynomial with remainders
-    pub fn div(mut self, mut b: Self) -> (Self, Self) {
+    pub fn divide_by(mut self, mut b: Self) -> (Self, Self) {
         truncate_high_degree_zeros(&mut self.0);
         truncate_high_degree_zeros(&mut b.0);
         assert!(!b.is_zero());
@@ -471,6 +470,143 @@ where
     }
 }
 
+impl<T> Polynomial<T>
+where
+    T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
+{
+    #[inline]
+    fn tabular_aux(a: &mut [T], a_top: usize, b: &[T]) {
+        let len_b = b.len();
+        for i in (0..a_top).rev() {
+            let coeff_a = replace(&mut a[i], T::zero());
+            for j in 0..len_b {
+                let a = &mut a[i + j];
+                *a = a.clone() + coeff_a.clone() * b[j].clone();
+            }
+        }
+    }
+
+    #[inline]
+    fn tabular_multiplication(Self(mut a): Self, Self(b): Self) -> Self {
+        let len_a = a.len();
+        let len_b = b.len();
+        debug_assert!(len_a > 0 && len_b > 0);
+        let len_r = len_a + len_b - 1;
+        a.resize_with(len_r, T::zero);
+        Self::tabular_aux(&mut a[..], len_a, &b);
+        truncate_high_degree_zeros(&mut a);
+        Self(a)
+    }
+
+    #[inline]
+    fn k_truncate_higher_degree_zeros(a: &[T]) -> &[T] {
+        for j in (0..a.len()).rev() {
+            if !a[j].is_zero() {
+                return &a[..j + 1];
+            }
+        }
+        &a[..1]
+    }
+
+    #[inline]
+    fn k_add_lower_and_higher_halves<'a>(a: &'a [T], m: usize, r: &'a mut [T]) -> &'a [T] {
+        let (mut a, mut b) = a.split_at(m);
+        if a.len() < b.len() {
+            swap(&mut a, &mut b);
+        }
+        let len_a = a.len();
+        let len_b = b.len();
+        for i in 0..len_b {
+            r[i] = a[i].clone() + b[i].clone();
+        }
+        for i in len_b..len_a {
+            r[i] = a[i].clone();
+        }
+        Self::k_truncate_higher_degree_zeros(&r[..len_a])
+    }
+
+    fn karatsuba_rec<'a>(mut a: &'a [T], mut b: &'a [T], c: &'a mut [T], scratch: &'a mut [T]) {
+        a = Self::k_truncate_higher_degree_zeros(a);
+        b = Self::k_truncate_higher_degree_zeros(b);
+        if a.len() < b.len() {
+            swap(&mut a, &mut b);
+        }
+        let len_a = a.len();
+        let len_b = b.len();
+        if len_a < 16 || len_b < 16 {
+            c[..len_a].clone_from_slice(a);
+            c[len_a..].fill_with(T::zero);
+            Self::tabular_aux(c, len_a, b);
+            return;
+        }
+        debug_assert!(len_b > 0);
+        let n = len_a;
+        let m = n / 2;
+        let m_ = n - m;
+        c.fill_with(T::zero);
+        if m < len_b {
+            let len_r = m_;
+            let len_s = m.max(len_b - m);
+            let (rs, scratch) = scratch.split_at_mut(len_r + len_s);
+            let (r, s) = rs.split_at_mut(len_r);
+            let r = Self::k_add_lower_and_higher_halves(a, m, r);
+            let s = Self::k_add_lower_and_higher_halves(b, m, s);
+            Self::karatsuba_rec(r, s, &mut c[m..][..len_r + len_s - 1], scratch);
+        } else {
+            let len_r = m_;
+            let len_s = len_b;
+            let (r, scratch) = scratch.split_at_mut(len_r);
+            let r = Self::k_add_lower_and_higher_halves(a, m, r);
+            let s = b;
+            Self::karatsuba_rec(r, s, &mut c[m..][..len_r + len_s - 1], scratch);
+        }
+        {
+            let a = Self::k_truncate_higher_degree_zeros(&a[..m]);
+            let b = Self::k_truncate_higher_degree_zeros(&b[..m.min(len_b)]);
+            let len_q = a.len() + b.len() - 1;
+            let (q, scratch) = scratch.split_at_mut(len_q);
+            Self::karatsuba_rec(a, b, q, scratch);
+            let q = Self::k_truncate_higher_degree_zeros(&q);
+            for i in 0..q.len() {
+                c[i] = c[i].clone() + q[i].clone();
+            }
+            let c = &mut c[m..];
+            for i in 0..q.len() {
+                c[i] = c[i].clone() - q[i].clone();
+            }
+        }
+        if m < len_b {
+            let a = &a[m..];
+            let b = &b[m..];
+            let len_p = a.len() + b.len() - 1;
+            let (p, scratch) = scratch.split_at_mut(len_p);
+            Self::karatsuba_rec(a, b, p, scratch);
+            let p = Self::k_truncate_higher_degree_zeros(&p[..len_p]);
+            let c = &mut c[m..];
+            for i in 0..p.len() {
+                c[i] = c[i].clone() - p[i].clone();
+            }
+            let c = &mut c[m..];
+            for i in 0..p.len() {
+                c[i] = c[i].clone() + p[i].clone();
+            }
+        }
+    }
+
+    fn karatsuba_multiplication(Self(mut a): Self, Self(mut b): Self) -> Self {
+        let len_a = a.len();
+        let len_b = b.len();
+        let len_max = max(len_a, len_b);
+        let len_r = len_a + len_b - 1;
+        let mut r = vec![T::zero(); len_r];
+        let mut scratch = vec![T::zero(); len_max.checked_mul(3).expect("input too large")];
+        Self::karatsuba_rec(&mut a, &mut b, &mut r, &mut scratch);
+        r.resize_with(len_r, T::zero);
+        truncate_high_degree_zeros(&mut r);
+        Self(r)
+    }
+}
+
 impl<T> Mul for Polynomial<T>
 where
     T: Mul<Output = T> + Zero + Sub<Output = T> + Clone,
@@ -480,47 +616,35 @@ where
         if self.is_zero() || other.is_zero() {
             return Polynomial::zero();
         }
-        let (Self(mut left), Self(mut right)) = (self, other);
-        if left.len() < 64 && right.len() < 64 {
-            #[allow(clippy::suspicious_arithmetic_impl)]
-            // REASON: use of plus operator here is sensible
-            let mut r = vec![T::zero(); left.len() + right.len()];
-            #[allow(clippy::suspicious_arithmetic_impl)]
-            // REASON: use of operators here is sensible
-            for (i, left) in left.into_iter().enumerate() {
-                for (r, r_) in r[i..]
-                    .iter_mut()
-                    .zip(right.iter().cloned().map(|right| left.clone() * right))
-                {
-                    *r = r.clone() + r_;
-                }
-            }
-            Polynomial::from(r)
+        if self.0.len() < 64 && other.0.len() < 64 {
+            Self::tabular_multiplication(self, other)
         } else {
-            // karatsuba
-            let n = max(left.len(), right.len());
-            let m = max(n / 2, 1);
-            let left_high: Polynomial<T> = if left.len() < m {
-                Polynomial::zero()
-            } else {
-                Polynomial::from(left.split_off(m))
-            };
-            let right_high: Polynomial<T> = if right.len() < m {
-                Polynomial::zero()
-            } else {
-                Polynomial::from(right.split_off(m))
-            };
+            Self::karatsuba_multiplication(self, other)
+            // let (Self(mut left), Self(mut right)) = (self, other);
+            // // karatsuba
+            // let n = max(left.len(), right.len());
+            // let m = max(n / 2, 1);
+            // let left_high: Polynomial<T> = if left.len() < m {
+            //     Polynomial::zero()
+            // } else {
+            //     Polynomial::from(left.split_off(m))
+            // };
+            // let right_high: Polynomial<T> = if right.len() < m {
+            //     Polynomial::zero()
+            // } else {
+            //     Polynomial::from(right.split_off(m))
+            // };
 
-            let left_low = Polynomial::from(left);
-            let right_low = Polynomial::from(right);
-            let high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
-            let low_pdt: Polynomial<_> = left_low.clone() * right_low.clone();
-            let mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
-                - high_pdt.clone()
-                - low_pdt.clone();
-            let r_high = high_pdt.mul_pow_x(m * 2);
-            let r_mid = mid.mul_pow_x(m);
-            r_high + r_mid + low_pdt
+            // let left_low = Polynomial::from(left);
+            // let right_low = Polynomial::from(right);
+            // let high_pdt: Polynomial<_> = left_high.clone() * right_high.clone();
+            // let low_pdt: Polynomial<_> = left_low.clone() * right_low.clone();
+            // let mid: Polynomial<_> = (left_low + left_high) * (right_low + right_high)
+            //     - high_pdt.clone()
+            //     - low_pdt.clone();
+            // let r_high = high_pdt.mul_pow_x(m * 2);
+            // let r_mid = mid.mul_pow_x(m);
+            // r_high + r_mid + low_pdt
         }
     }
 }
@@ -646,7 +770,7 @@ where
             let mut coeffs = coeffs.to_vec();
             let es = Polynomial(coeffs.drain(0..e).chain(Some(T::one())).collect());
             let qs = Polynomial(coeffs);
-            let (fs, rs) = qs.div(es.clone());
+            let (fs, rs) = qs.divide_by(es.clone());
             if fs.0.len() < k {
                 None?;
             } else if rs.is_zero() {

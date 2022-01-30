@@ -2,8 +2,9 @@
 name = "sss"
 version = "0.1.0"
 authors = ["Ding Xiang Fei <dingxiangfei2009@gmail.com>"]
-edition = "2018"
+edition = "2021"
 license = "MIT OR Apache-2.0"
+resolver = "2"
 
 [dependencies]
 alga = "0.9.1"
@@ -12,7 +13,7 @@ cached = "0.11.0"
 crossbeam = "0.7.3"
 derive_more = "0.15.0"
 digest = "0.10.0"
-failure = "0.1.0"
+thiserror = "1.0"
 generic-array = "0.14"
 itertools = "0.9.0"
 lazy_static = "1.0"
@@ -38,7 +39,7 @@ version = "1.6.0"
 features = ["serde"]
 
 [dependencies.ndarray]
-version = "0.13.0"
+version = "0.15.0"
 features = ["rayon"]
 
 [dev-dependencies]

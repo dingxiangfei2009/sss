@@ -1,7 +1,5 @@
 use std::{borrow::Borrow, hash::Hash, marker::PhantomData};
 
-use failure::Fail;
-
 #[derive(Clone, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct MerkleTreeNode<T, S, H, Ho> {
     left: Box<MerkleTree<T, S, H, Ho>>,
@@ -313,9 +311,9 @@ where
     Undetermined(MerkleTreeQuorumUndetermined<T, S, H, Ho>),
 }
 
-#[derive(Fail, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum Error {
-    #[fail(display = "mismatch hash")]
+    #[error("mismatch hash")]
     Mismatch,
 }
 

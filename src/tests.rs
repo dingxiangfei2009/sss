@@ -686,3 +686,21 @@ fn fixed_poly_div() {
         assert_eq!(p * q + r, GF2561D_P2::repr());
     }
 }
+
+fn poly_mul_prop(a: Vec<u32>, b: Vec<u32>) -> TestResult {
+    if a.is_empty() || b.is_empty() {
+        return TestResult::discard();
+    }
+    let a: Vec<_> = a.into_iter().map(|x| x as i128).collect();
+    let b: Vec<_> = b.into_iter().map(|x| x as i128).collect();
+    let Polynomial(c1) =
+        Polynomial::karatsuba_multiplication(Polynomial(a.clone()), Polynomial(b.clone()));
+    let Polynomial(c2) = Polynomial::tabular_multiplication(Polynomial(a), Polynomial(b));
+    TestResult::from_bool(c1 == c2)
+}
+
+quickcheck! {
+    fn poly_mul(a: Vec<u32>, b: Vec<u32>) -> TestResult {
+        poly_mul_prop(a, b)
+    }
+}

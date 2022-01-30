@@ -202,7 +202,6 @@ where
             data.reduce(*m_level);
             fibers.push(data);
         }
-        debug_assert!(fibers.len() <= 2 * t);
         fibers.resize_with(2 * t, || {
             let mut x = Self::zero();
             x.reduce(*m_level);

@@ -82,7 +82,9 @@ pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<
                     let mut it = a.axis_iter_mut(Axis(0));
                     let this_row = it.next().expect("this row exists");
                     let that_row = it.next().expect("that row exists");
-                    Zip::from(this_row).and(that_row).par_apply(std::mem::swap);
+                    Zip::from(this_row)
+                        .and(that_row)
+                        .par_for_each(std::mem::swap);
                 }
             } else {
                 break;
@@ -127,7 +129,7 @@ pub fn gaussian_elimination<T: Field + Send + Sync>(mut a: Array2<T>) -> Array2<
                 let scale = eqn[*pivot].clone();
                 Zip::from(eqn)
                     .and(this_equation)
-                    .par_apply(|e, e_| *e -= e_.clone() * scale.clone());
+                    .par_for_each(|e, e_| *e -= e_.clone() * scale.clone());
             });
         }
     }
@@ -150,7 +152,9 @@ pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
             let mut it = a.axis_iter_mut(Axis(0));
             let this_row = it.next().expect("row must exists");
             let that_row = it.find(|row| !row[unknown].is_zero())?;
-            Zip::from(this_row).and(that_row).par_apply(std::mem::swap);
+            Zip::from(this_row)
+                .and(that_row)
+                .par_for_each(std::mem::swap);
         }
         let (mut this_equation, mut rest_equations) =
             a.slice_mut(s![unknown.., ..]).split_at(Axis(0), 1);
@@ -183,7 +187,7 @@ pub fn solve<T: Field + Send + Sync>(mut a: Array2<T>) -> Option<Array1<T>> {
             let scale = eqn[unknown].clone();
             Zip::from(eqn)
                 .and(this_equation)
-                .par_apply(|e, e_| *e -= e_.clone() * scale.clone());
+                .par_for_each(|e, e_| *e -= e_.clone() * scale.clone());
         });
     }
 

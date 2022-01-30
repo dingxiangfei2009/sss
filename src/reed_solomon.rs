@@ -1,16 +1,10 @@
 //! Reed-Solomon code, implemented from a Fourier Transform point of view
 
-use std::{
-    collections::BTreeSet,
-    iter::{once, repeat},
-    ops::Deref,
-    pin::Pin,
-    sync::Arc,
-};
+use std::{collections::BTreeSet, iter::repeat, ops::Deref, pin::Pin, sync::Arc};
 
 use alga::general::Field;
-use failure::Fail;
 use num::One;
+use thiserror::Error;
 
 use crate::{field::FiniteField, fourier::UnityRoot, poly::PolynomialLike, pow, Coord, Polynomial};
 
@@ -27,22 +21,19 @@ pub struct ReedSolomon<F, P = Polynomial<F>> {
 }
 
 /// Decode error scenarios
-#[derive(Fail, Debug)]
+#[derive(Error, Debug)]
 pub enum DecodeError {
     /// There are two many errors in the sense word
-    #[fail(display = "too many errors found, expect at most {}", _0)]
+    #[error("too many errors found, expect at most {0}")]
     TooManyError(usize),
     /// Code length does not match with the codec's requirement
-    #[fail(display = "code has wrong size, expect {}, found {}", expect, found)]
+    #[error("code has wrong size, expect {expect}, found {found}")]
     CodeLength { expect: usize, found: usize },
     /// Data length is not consistent with the codec's parameters
-    #[fail(display = "data has wrong size, expect {}, found {}", expect, found)]
+    #[error("data has wrong size, expect {expect}, found {found}")]
     DataLength { expect: usize, found: usize },
     /// Too many erasures in the sense word
-    #[fail(
-        display = "unexpected erasure position {}, expect at most {}",
-        found, expect
-    )]
+    #[error("unexpected erasure position {found}, expect at most {expect}")]
     Erasure { expect: usize, found: usize },
 }
 
@@ -78,12 +69,9 @@ where
     F: FiniteField + Clone,
     P: PolynomialLike<F> + Clone,
 {
-    let mut a = P::from_vec(
-        repeat(F::zero())
-            .take(t * 2)
-            .chain(once(F::one()))
-            .collect(),
-    );
+    let mut a = vec![F::zero(); t * 2 + 1];
+    a[t * 2] = F::one();
+    let mut a = P::from_vec(a);
     let mut b = syndrome;
     assert!(a.degree() >= b.degree(), "check your math");
     let d = t + rho / 2;
@@ -206,7 +194,7 @@ where
         let Polynomial(mut syndrome) = syndrome.into_polynomial();
         let syndrome = P::from_vec(
             syndrome
-                .drain(..std::cmp::min(syndrome.len(), 2 * self.correction_level + 1))
+                .drain(..syndrome.len().min(2 * self.correction_level + 1))
                 .collect(),
         );
         let (err_locator, err_eval) = sugiyama(syndrome, self.correction_level, erasure.len());

@@ -44,7 +44,7 @@ use serde::{
 use crate::{
     adapter::Int,
     field::{int_inj, ConstructibleNumber, FiniteField, Fp, PrimeModulo},
-    fourier::{cooley_tukey, naive, UnityRoot},
+    fourier::{cooley_tukey, cooley_tukey_par, naive, UnityRoot},
     gaussian::{make_gaussian_sampler, BaseSampler, ParallelGenericSampler, PRECISION},
 };
 
@@ -291,7 +291,7 @@ fn construct_fft_2_12() -> ArcFFTOP {
         clone_fn(&fft_2_3),
         clone_fn(&fft_2_3),
     ));
-    Arc::pin(cooley_tukey(
+    Arc::pin(cooley_tukey_par(
         64,
         64,
         UNITY_ROOT_8192.clone().subgroup(KEY_SIZE),

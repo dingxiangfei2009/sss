@@ -6,7 +6,7 @@ use std::{
 
 use alga::general::{Field, Ring};
 use lazy_static::lazy_static;
-use ndarray::{Array1, Array2, ArrayViewMut, Axis};
+use ndarray::{Array1, Array2, ArrayView1, ArrayViewMut, ArrayViewMut1, Axis};
 use num::traits::{One, Zero};
 
 use crate::{
@@ -38,7 +38,7 @@ impl<F: Ring> UnityRoot<F> {
 
 /// Cooley Tukey fast Fourier Transform where the order of the root of unity
 /// decomposes into non-trivial factors
-pub fn cooley_tukey<F>(
+pub fn cooley_tukey_par<F>(
     n1: usize,
     n2: usize,
     root: UnityRoot<F>,
@@ -99,35 +99,82 @@ where
     }
 }
 
+pub fn cooley_tukey<F>(
+    n1: usize,
+    n2: usize,
+    root: UnityRoot<F>,
+    transform1: impl Sync + Fn(Vec<F>) -> Vec<F>,
+    transform2: impl Sync + Fn(Vec<F>) -> Vec<F>,
+) -> impl Sync + Fn(Vec<F>) -> Vec<F>
+where
+    F: Ring + Clone + Sync,
+{
+    let n = n1 * n2;
+    assert_eq!(n, root.order);
+
+    let mut ws = vec![];
+    let mut w = F::one();
+    for _ in 0..n1 {
+        ws.push(w.clone());
+        w *= root.root.clone();
+    }
+    let mut r = vec![F::one(); n1];
+    let mut twiddle = r.clone();
+    for _ in 1..n2 {
+        for (r, w) in r.iter_mut().zip(&ws) {
+            *r = r.clone() * w.clone();
+        }
+        twiddle.extend(r.iter().cloned());
+    }
+    let twiddle = Array2::from_shape_vec((n2, n1), twiddle).expect("shape must be correct");
+    move |mut x: Vec<F>| {
+        assert_eq!(n, x.len());
+
+        let mut x_view = ArrayViewMut::from_shape((n2, n1), &mut x).expect("shape must be correct");
+        for mut col in x_view.axis_iter_mut(Axis(1)) {
+            let col_fft = transform2(col.to_owned().to_vec());
+            for (a, b) in col.iter_mut().zip(col_fft) {
+                *a = b;
+            }
+        }
+        x_view *= &twiddle;
+        for mut row in x_view.axis_iter_mut(Axis(0)) {
+            let row_fft = transform1(row.to_owned().to_vec());
+            for (a, b) in row.iter_mut().zip(row_fft) {
+                *a = b;
+            }
+        }
+        x_view.t().axis_iter(Axis(0)).flatten().cloned().collect()
+    }
+}
+
 /// Fourier Transform by definition
 pub fn naive<F>(root: UnityRoot<F>) -> impl Fn(Vec<F>) -> Vec<F>
 where
     F: Ring + Clone + Sync,
 {
-    move |x: Vec<F>| {
-        let n = x.len();
-        assert_eq!(n, root.order);
-
-        let (ws_, _) = (0..n).fold((vec![], F::one()), |(mut ws, w), _| {
-            ws.push(w.clone());
-            (ws, w * root.root.clone())
-        });
-        let mut ws = vec![F::one(); n];
-
-        let mut ys = vec![];
-        for _ in 0..n {
-            ys.push(
-                ws.iter()
-                    .zip(x.iter())
-                    .fold(F::zero(), |y, (w, x)| y + w.clone() * x.clone()),
-            );
-            for (w, w_) in ws.iter_mut().zip(ws_.iter()) {
-                *w *= w_.clone();
-            }
-        }
-
-        ys
+    let n = root.order;
+    assert!(n > 0);
+    let mut ws = Vec::with_capacity(n);
+    let mut w = F::one();
+    ws.push(w.clone());
+    for _ in 1..n {
+        w = w * root.root.clone();
+        ws.push(w.clone());
     }
+    let mut v = vec![F::one(); n * n];
+    if n > 1 {
+        let mut v = &mut v[..];
+        for _ in 1..n {
+            let (prev, rest) = v.split_at_mut(n);
+            let next = ArrayViewMut1::from(&mut rest[..n]);
+            let vals = ArrayView1::from(&*prev).to_owned() * ArrayView1::from(&ws);
+            vals.assign_to(next);
+            v = rest;
+        }
+    }
+    let v = Array2::from_shape_vec((n, n), v).expect("shape should be correct");
+    move |x: Vec<F>| mat_vec_mul(&v, &x)
 }
 
 /// finite field fast Fourier Transform with convolution
@@ -293,7 +340,7 @@ lazy_static! {
             3,
             5,
             GF2561DG2_UNITY_ROOT.clone().subgroup(15),
-            |x| GF2561D_3_FFT(x),
+            naive(GF2561DG2_UNITY_ROOT.clone().subgroup(3)),
             |x| GF2561D_5_FFT(x),
         ),
         |x| GF2561D_17_FFT(x),

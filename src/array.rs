@@ -50,9 +50,9 @@ where
         for mut array in arrays {
             let len = array.len_of(axis);
             let (mut front, rest) = assign_view.split_at(axis, len);
-            Zip::from(&mut front).and(&mut array).apply(|dst, src|
-                       // this is safe, because `MaybeUninit` does not manage `Drop`
-                       unsafe { src.as_ptr().copy_to(dst.as_mut_ptr(), 1) });
+            Zip::from(&mut front).and(&mut array).for_each(|dst, src|
+                // this is safe, because `MaybeUninit` does not manage `Drop`
+                unsafe { src.as_ptr().copy_to(dst.as_mut_ptr(), 1) });
             assign_view = rest;
         }
     }

@@ -1,9 +1,5 @@
-#[macro_use]
-extern crate derive_more;
-
 use std::{fs::File, io::Write, path::PathBuf};
 
-use failure::Fail;
 use rand::rngs::OsRng;
 use sss::{
     artin::GF65536NPreparedMultipointEvalVZG,
@@ -20,12 +16,12 @@ struct Opt {
     prikey: PathBuf,
 }
 
-#[derive(Fail, Debug, From)]
+#[derive(thiserror::Error, Debug)]
 enum Error {
-    #[fail(display = "serialization: {}", _0)]
-    Serialization(#[cause] serde_json::Error),
-    #[fail(display = "io: {}", _0)]
-    Io(#[cause] std::io::Error),
+    #[error("serialization: {0}")]
+    Serialization(#[from] serde_json::Error),
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
 }
 
 fn main() -> Result<(), Error> {
