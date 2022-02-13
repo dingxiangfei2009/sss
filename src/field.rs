@@ -20,7 +20,7 @@ use serde::{de::Deserializer, ser::Serializer, Deserialize, Serialize};
 
 use crate::{adapter::Int, pow, EuclideanDomain};
 
-pub trait ConstructibleNumber:
+pub trait ConstructibleNat:
     Clone
     + Zero
     + One
@@ -28,39 +28,39 @@ pub trait ConstructibleNumber:
     + Div<Output = Self>
     + Rem<Output = Self>
     + Add<Output = Self>
-    + Sub<Output = Self>
     + Shl<u32, Output = Self>
     + Shr<u32, Output = Self>
     + BitAnd<Output = Self>
     + BitOr<Output = Self>
-    + Neg<Output = Self>
     + Ord
     + Eq
 {
 }
 
-impl<T> ConstructibleNumber for T where
+impl<T> ConstructibleNat for T where
     T: Clone
         + Zero
         + One
-        + Mul<Output = T>
-        + Div<Output = T>
-        + Rem<Output = T>
-        + Add<Output = T>
-        + Sub<Output = T>
-        + Shl<u32, Output = T>
-        + Shr<u32, Output = T>
-        + BitAnd<Output = T>
-        + BitOr<Output = T>
-        + Neg<Output = T>
+        + Mul<Output = Self>
+        + Div<Output = Self>
+        + Rem<Output = Self>
+        + Add<Output = Self>
+        + Shl<u32, Output = Self>
+        + Shr<u32, Output = Self>
+        + BitAnd<Output = Self>
+        + BitOr<Output = Self>
         + Ord
         + Eq
 {
 }
 
+pub trait ConstructibleNumber: ConstructibleNat + Sub<Output = Self> + Neg<Output = Self> {}
+
+impl<T> ConstructibleNumber for T where T: ConstructibleNat + Sub<Output = T> + Neg<Output = T> {}
+
 pub trait FiniteField: alga::general::Field {
-    fn characteristic<T: ConstructibleNumber>() -> T;
-    fn degree_extension<T: ConstructibleNumber>() -> T;
+    fn characteristic<T: ConstructibleNat>() -> T;
+    fn degree_extension<T: ConstructibleNat>() -> T;
 
     // TODO: requires the base to have the same characteristics and degree of extension to be 1
     /// Scalar type, with respect to some finite set of
@@ -76,7 +76,7 @@ pub trait FiniteField: alga::general::Field {
     /// Apply Frobenius Endomorphism from the base field
     fn frobenius_base(self) -> Self;
     /// Auxillary Frobenius map for arbitrary type
-    fn field_size<T: ConstructibleNumber>() -> T;
+    fn field_size<T: ConstructibleNat>() -> T;
     /// Try to lower the element into the subfield
     fn try_lower(self) -> Option<Self::Scalar>;
     /// Enumerate the basis elements of this field as a vector space over the subfield
@@ -111,6 +111,25 @@ where
 
 pub trait FinitelyGenerated<G> {
     fn generator() -> Self;
+}
+
+pub fn nat_inj<F, N>(mut n: N) -> F
+where
+    F: Zero + One + Add<Output = F> + Clone,
+    N: Rem<Output = N> + DivAssign + Clone + One + Zero + Ord,
+{
+    let mut f = F::zero();
+    let mut f_ = F::one();
+    let n_one = N::one();
+    let n_two = n_one.clone() + n_one.clone();
+    while !n.is_zero() {
+        if !(n.clone() % n_two.clone()).is_zero() {
+            f = f.clone() + f_.clone();
+        }
+        f_ = f_.clone() + f_.clone();
+        n /= n_two.clone();
+    }
+    f
 }
 
 pub fn int_inj<F, N>(mut n: N) -> F
@@ -165,11 +184,11 @@ pub struct GF2561D(pub u8);
 pub struct GF2561DG2;
 
 impl FiniteField for GF2561D {
-    fn characteristic<T: ConstructibleNumber>() -> T {
-        int_inj(2)
+    fn characteristic<T: ConstructibleNat>() -> T {
+        nat_inj(2)
     }
-    fn degree_extension<T: ConstructibleNumber>() -> T {
-        int_inj(8)
+    fn degree_extension<T: ConstructibleNat>() -> T {
+        nat_inj(8)
     }
     type Scalar = F2;
 
@@ -194,8 +213,8 @@ impl FiniteField for GF2561D {
         pow(self, 2)
     }
 
-    fn field_size<T: ConstructibleNumber>() -> T {
-        let sz: T = int_inj(2);
+    fn field_size<T: ConstructibleNat>() -> T {
+        let sz: T = nat_inj(2);
         pow(sz, 8)
     }
 
@@ -221,10 +240,10 @@ impl FiniteField for GF2561D {
 }
 
 impl FiniteField for F2 {
-    fn characteristic<T: ConstructibleNumber>() -> T {
-        int_inj(2)
+    fn characteristic<T: ConstructibleNat>() -> T {
+        nat_inj(2)
     }
-    fn degree_extension<T: ConstructibleNumber>() -> T {
+    fn degree_extension<T: ConstructibleNat>() -> T {
         T::one()
     }
     type Scalar = Self;
@@ -241,8 +260,8 @@ impl FiniteField for F2 {
         self
     }
 
-    fn field_size<T: ConstructibleNumber>() -> T {
-        int_inj(2)
+    fn field_size<T: ConstructibleNat>() -> T {
+        nat_inj(2)
     }
 
     fn try_lower(self) -> Option<Self> {

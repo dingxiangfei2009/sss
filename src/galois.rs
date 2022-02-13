@@ -15,13 +15,15 @@ use alga::general::{
     Additive, Field, Identity, Multiplicative, TwoSidedInverse,
 };
 use ndarray::Array2;
-use num::{One, Zero};
+use num::{BigUint, One, Zero};
 use rand::RngCore;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::{
     adapter::Int,
-    field::{int_inj, ArbitraryElement, ConstructibleNumber, FiniteField, F2, GF2561D},
+    field::{
+        nat_inj, ArbitraryElement, ConstructibleNat, ConstructibleNumber, FiniteField, F2, GF2561D,
+    },
     linalg::solve,
     poly::PolynomialLike,
     pow, Coord, EuclideanDomain, Polynomial,
@@ -590,11 +592,11 @@ where
     T: PolynomialLike<F> + PartialEq,
 {
     type Scalar = F;
-    fn characteristic<Char: ConstructibleNumber>() -> Char {
+    fn characteristic<Char: ConstructibleNat>() -> Char {
         F::characteristic()
     }
-    fn degree_extension<Degree: ConstructibleNumber>() -> Degree {
-        int_inj(P::degree())
+    fn degree_extension<Degree: ConstructibleNat>() -> Degree {
+        nat_inj(P::degree())
     }
     fn to_vec(&self) -> Vec<F> {
         let Polynomial(mut data) = self.data.clone().into_polynomial();
@@ -621,8 +623,11 @@ where
         }
         r
     }
-    fn field_size<Size: ConstructibleNumber>() -> Size {
-        crate::pow(Self::Scalar::field_size(), Self::degree_extension::<Int>())
+    fn field_size<Size: ConstructibleNat>() -> Size {
+        crate::pow(
+            Self::Scalar::field_size(),
+            Self::degree_extension::<BigUint>(),
+        )
     }
 
     fn try_lower(self) -> Option<Self::Scalar> {
@@ -1207,11 +1212,11 @@ where
     B: NormalBasis<F>,
 {
     type Scalar = F;
-    fn characteristic<T: ConstructibleNumber>() -> T {
+    fn characteristic<T: ConstructibleNat>() -> T {
         F::characteristic()
     }
-    fn degree_extension<T: ConstructibleNumber>() -> T {
-        int_inj(B::degree_extension())
+    fn degree_extension<T: ConstructibleNat>() -> T {
+        nat_inj(B::degree_extension())
     }
     fn to_vec(&self) -> Vec<F> {
         self.data.clone()
@@ -1225,7 +1230,7 @@ where
     fn frobenius_base(self) -> Self {
         self.shift_right(1)
     }
-    fn field_size<T: ConstructibleNumber>() -> T {
+    fn field_size<T: ConstructibleNat>() -> T {
         crate::pow(Self::Scalar::field_size(), B::degree_extension())
     }
     fn try_lower(mut self) -> Option<Self::Scalar> {

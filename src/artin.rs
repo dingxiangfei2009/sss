@@ -7,7 +7,7 @@ use std::{
 };
 
 use alga::general::Field;
-use num::{One, Zero};
+use num::{BigUint, One, ToPrimitive, Zero};
 use rayon::prelude::*;
 
 use crate::{
@@ -113,7 +113,9 @@ where
         let bases = T::basis_elements_over_bottom();
         let mut s = Polynomial(vec![F::zero(), F::one()]);
         let mut ss = vec![s.clone()];
-        let q = T::Bottom::field_size::<Int>().assert_usize();
+        let q = T::Bottom::field_size::<BigUint>()
+            .to_usize()
+            .expect("field size should fit in memory");
         let mut s_betas = vec![bases.clone()];
         for (j, basis) in bases.iter().enumerate() {
             let Coord(_, t) = s.eval_at(basis.clone());
@@ -134,7 +136,7 @@ where
                 LazyList::new(
                     s,
                     Box::new(|s: Polynomial<F>| {
-                        let next_2pow = pow(s.clone(), 2);
+                        let next_2pow = pow(s.clone(), 2u8);
                         (next_2pow, s)
                     }) as Box<dyn Send + Sync + FnMut(_) -> _>,
                 )

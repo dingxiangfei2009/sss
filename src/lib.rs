@@ -44,6 +44,7 @@ pub mod ring;
 pub mod ser;
 pub mod unsafe_field;
 
+use crate::field::nat_inj;
 pub use crate::{
     adapter::Int,
     field::int_inj,
@@ -879,13 +880,13 @@ where
     // assertion
     let q: Int = F::characteristic();
     let f_deg_ext: Int = F::degree_extension();
-    let a = int_inj::<BigUint, Int>(pow(q.clone(), f_deg_ext) - Int::one());
-    let b = int_inj::<BigUint, Int>(pow(q.clone(), deg_ext) - Int::one());
+    let a = nat_inj::<BigUint, Int>(pow(q.clone(), f_deg_ext) - Int::one());
+    let b = nat_inj::<BigUint, Int>(pow(q.clone(), deg_ext) - Int::one());
     let exp = a / b;
 
     let gamma = pow(<F as FinitelyGenerated<G>>::generator(), exp);
     let mut alpha = gamma.clone();
-    let mut c = int_inj::<BigUint, Int>(pow(q, deg_ext) - Int::one());
+    let mut c = nat_inj::<BigUint, Int>(pow(q, deg_ext) - Int::one());
     while !c.is_zero() {
         if test_normal_basis(alpha.clone(), deg_ext) {
             return alpha;

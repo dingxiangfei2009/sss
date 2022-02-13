@@ -43,7 +43,7 @@ use serde::{
 
 use crate::{
     adapter::Int,
-    field::{int_inj, ConstructibleNumber, FiniteField, Fp, PrimeModulo},
+    field::{int_inj, nat_inj, ConstructibleNat, FiniteField, Fp, PrimeModulo},
     fourier::{cooley_tukey, cooley_tukey_par, naive, UnityRoot},
     gaussian::{make_gaussian_sampler, BaseSampler, ParallelGenericSampler, PRECISION},
 };
@@ -52,10 +52,10 @@ pub struct Prime273_72;
 
 impl<V> PrimeModulo<V> for Prime273_72
 where
-    V: ConstructibleNumber,
+    V: ConstructibleNat,
 {
     fn divisor() -> V {
-        let mut v = int_inj(273);
+        let mut v = nat_inj(273);
         v = v << 72;
         v = v + V::one();
         v
@@ -63,10 +63,10 @@ where
 }
 
 impl FiniteField for F {
-    fn characteristic<T: ConstructibleNumber>() -> T {
+    fn characteristic<T: ConstructibleNat>() -> T {
         Prime273_72::divisor()
     }
-    fn degree_extension<T: ConstructibleNumber>() -> T {
+    fn degree_extension<T: ConstructibleNat>() -> T {
         T::one()
     }
     type Scalar = Self;
@@ -79,7 +79,7 @@ impl FiniteField for F {
     fn frobenius_base(self) -> Self {
         self
     }
-    fn field_size<T: ConstructibleNumber>() -> T {
+    fn field_size<T: ConstructibleNat>() -> T {
         Prime273_72::divisor()
     }
     fn try_lower(self) -> Option<Self::Scalar> {
