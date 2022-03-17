@@ -1,17 +1,19 @@
 use std::{
+    collections::{btree_map::Entry, BTreeMap},
     convert::TryInto,
     fmt::{Debug, Formatter, Result as FmtResult},
     iter::repeat_with,
     marker::PhantomData,
+    ops::{Add, Mul, Neg, Sub},
     sync::{Arc, RwLock},
 };
 
 use alga::general::Field;
-use num::{BigUint, One, ToPrimitive, Zero};
+use num::{One, Zero};
 use rayon::prelude::*;
 
 use crate::{
-    field::{FiniteField, PrimeSubfield, F2},
+    field::{nat_inj, FiniteField, PrimeSubfield, F2},
     galois::{ExtensionTower, GF65536NTower, GF65536N},
     poly::MultipointEvaluator,
     pow, Coord, EuclideanDomain, Int, Polynomial,
@@ -85,22 +87,192 @@ impl<T, S, G> LazyList<T, S, G> {
     }
 }
 
+type MultipointEvalVZGathenLazyList<F> = LazyList<
+    SparsePolynomial<F>,
+    SparsePolynomial<F>,
+    Box<dyn Send + Sync + FnMut(SparsePolynomial<F>) -> (SparsePolynomial<F>, SparsePolynomial<F>)>,
+>;
+
 /// Multi-point evaluation strategy, by von zur Gathen
 #[derive(Clone, Debug)]
 pub struct MultipointEvalVZGathen<F, T>
 where
     F: FiniteField,
 {
-    ss: Vec<Polynomial<F>>,
-    s_2pows: Vec<
-        LazyList<
-            Polynomial<F>,
-            Polynomial<F>,
-            Box<dyn Send + Sync + FnMut(Polynomial<F>) -> (Polynomial<F>, Polynomial<F>)>,
-        >,
-    >,
+    ss: Vec<SparsePolynomial<F>>,
+    s_2pows: Vec<MultipointEvalVZGathenLazyList<F>>,
     s_betas: Vec<Vec<F>>,
     _p: PhantomData<fn() -> T>,
+}
+
+/// A sparse representation of polynomials, ordered in ascending powers of X
+#[derive(Clone, Debug)]
+struct SparsePolynomial<F>(Vec<(usize, F)>);
+
+impl<F> SparsePolynomial<F> {
+    fn degree(&self) -> usize {
+        self.0.last().expect("should not be empty").0
+    }
+}
+
+impl<F> Mul<F> for SparsePolynomial<F>
+where
+    F: Mul<F, Output = F> + Clone,
+{
+    type Output = Self;
+
+    fn mul(mut self, rhs: F) -> Self::Output {
+        for (_, c) in &mut self.0 {
+            *c = c.clone() * rhs.clone();
+        }
+        self
+    }
+}
+
+impl<F> SparsePolynomial<F>
+where
+    F: Mul<F, Output = F> + Add<F, Output = F> + Zero + Clone + One,
+{
+    fn eval_at(&self, x: F) -> F {
+        let mut r = F::zero();
+        for (e, c) in &self.0 {
+            r = r + pow(x.clone(), *e) * c.clone();
+        }
+        r
+    }
+
+    /// compute p(x)^2
+    fn sqr(&self) -> Self {
+        let Self(s) = self;
+        if s.len() == 1 && s[0].1.is_zero() {
+            return Self(vec![(0, F::zero())]);
+        }
+        let mut r = BTreeMap::new();
+        for (i, ci) in s {
+            r.insert(
+                i.checked_mul(2).expect("overflowing exponent"),
+                ci.clone() * ci.clone(),
+            );
+        }
+        let two: F = nat_inj(2u8);
+        if two.is_zero() {
+            return Self(r.into_iter().collect());
+        }
+        for i_ in 0..s.len() {
+            let (i, ci) = &s[i_];
+            for j_ in i_ + 1..s.len() {
+                let (j, cj) = &s[j_];
+                let c = two.clone() * ci.clone() * cj.clone();
+                if c.is_zero() {
+                    continue;
+                }
+                match r.entry(i.checked_add(*j).expect("overflowing exponent")) {
+                    Entry::Vacant(e) => {
+                        e.insert(c);
+                    }
+                    Entry::Occupied(mut e) => {
+                        let c_ = e.get_mut();
+                        *c_ = c_.clone() + c;
+                        if c_.is_zero() {
+                            e.remove();
+                        }
+                    }
+                }
+            }
+        }
+        Self(r.into_iter().collect())
+    }
+}
+
+impl<F> SparsePolynomial<F>
+where
+    F: FiniteField + Clone,
+{
+    fn pow_q<T>(&self) -> Self
+    where
+        T: ExtensionTower<Super = F>,
+    {
+        let mut s = self.0.clone();
+        let q = T::Bottom::field_size::<usize>();
+        for (e, c) in &mut s {
+            *e = e.checked_mul(q).expect("overflowing exponent");
+            *c = pow(c.clone(), q);
+        }
+        Self(s)
+    }
+}
+
+impl<F> Sub<Self> for SparsePolynomial<F>
+where
+    F: Sub<F, Output = F> + Neg<Output = F> + Zero,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        let Self(lhs) = self;
+        let Self(rhs) = rhs;
+        let mut r = Vec::with_capacity(lhs.len() + rhs.len());
+        let mut lhs = lhs.into_iter().fuse().peekable();
+        let mut rhs = rhs.into_iter().fuse().peekable();
+        loop {
+            match (lhs.peek(), rhs.peek()) {
+                (Some((eleft, _)), Some((eright, _))) => {
+                    if eleft < eright {
+                        let (e, c) = lhs.next().expect("there must be next element");
+                        if !c.is_zero() {
+                            r.push((e, c))
+                        }
+                    } else if eleft > eright {
+                        let (e, c) = rhs.next().expect("there must be next element");
+                        if !c.is_zero() {
+                            r.push((e, -c))
+                        }
+                    } else {
+                        let (_, cleft) = lhs.next().expect("there must be next element");
+                        let (e, cright) = rhs.next().expect("there must be next element");
+                        let c = cleft - cright;
+                        if !c.is_zero() {
+                            r.push((e, c))
+                        }
+                    }
+                }
+                (Some(_), _) => {
+                    let (e, c) = lhs.next().expect("there must be next element");
+                    if !c.is_zero() {
+                        r.push((e, c))
+                    }
+                }
+                (_, Some(_)) => {
+                    let (e, c) = rhs.next().expect("there must be next element");
+                    if !c.is_zero() {
+                        r.push((e, -c))
+                    }
+                }
+                _ => return Self(r),
+            }
+        }
+    }
+}
+
+struct PolynomialSlice<'a, F>(&'a [F]);
+
+impl<'a, F> PolynomialSlice<'a, F>
+where
+    F: Zero,
+{
+    fn new(p: &'a [F]) -> Self {
+        if p.is_empty() {
+            return Self(p);
+        }
+        let mut j = 0;
+        for (i, c) in p.iter().enumerate().rev() {
+            if !c.is_zero() {
+                j = i;
+                break;
+            }
+        }
+        Self(&p[..=j])
+    }
 }
 
 impl<F, T> MultipointEvalVZGathen<F, T>
@@ -111,20 +283,18 @@ where
 {
     pub fn new() -> Self {
         let bases = T::basis_elements_over_bottom();
-        let mut s = Polynomial(vec![F::zero(), F::one()]);
+        let mut s = SparsePolynomial(vec![(1, F::one())]); // s_0 = x
         let mut ss = vec![s.clone()];
-        let q = T::Bottom::field_size::<BigUint>()
-            .to_usize()
-            .expect("field size should fit in memory");
+        let q = T::Bottom::field_size::<usize>();
+        assert!(q > 0);
         let mut s_betas = vec![bases.clone()];
         for (j, basis) in bases.iter().enumerate() {
-            let Coord(_, t) = s.eval_at(basis.clone());
-            let t = pow(t, q - 1);
-            s = pow(s.clone(), q) - s * t;
+            let t = pow(s.eval_at(basis.clone()), q - 1); // NOTE: `t` is not necessarily `1`
+            s = s.pow_q::<T>() - s * t;
             s_betas.push(
                 bases[j + 1..]
                     .iter()
-                    .map(|b| s.eval_at(b.clone()).1)
+                    .map(|b| s.eval_at(b.clone()))
                     .collect(),
             );
             ss.push(s.clone());
@@ -135,10 +305,8 @@ where
             .map(|s| {
                 LazyList::new(
                     s,
-                    Box::new(|s: Polynomial<F>| {
-                        let next_2pow = pow(s.clone(), 2u8);
-                        (next_2pow, s)
-                    }) as Box<dyn Send + Sync + FnMut(_) -> _>,
+                    Box::new(|s: SparsePolynomial<F>| (s.sqr(), s))
+                        as Box<dyn Send + Sync + FnMut(_) -> _>,
                 )
             })
             .collect();
@@ -148,6 +316,68 @@ where
             s_2pows,
             _p: PhantomData,
         }
+    }
+
+    /// returns (remainder, quotient)
+    fn sparse_div_with_rem<'a>(
+        p: &'a mut [F],
+        divisor: &SparsePolynomial<F>,
+    ) -> (&'a mut [F], &'a mut [F]) {
+        let deg_divisor = divisor.degree();
+        let n = p.len() - 1;
+        if n < deg_divisor {
+            return p.split_at_mut(p.len());
+        }
+        for i in (deg_divisor..=n).rev() {
+            let mut itr_d = divisor.0.iter().rev();
+            let (deg, lead) = itr_d.next().unwrap();
+            debug_assert_eq!(*deg, deg_divisor);
+            let quot = p[i].clone() / lead.clone();
+            p[i] = quot.clone();
+            for (j, c) in itr_d {
+                debug_assert!(j < deg);
+                let c_ = &mut p[i - deg_divisor + j];
+                *c_ = c_.clone() - c.clone() * quot.clone();
+            }
+        }
+        p.split_at_mut(deg_divisor)
+    }
+
+    fn taylor_expansion_aux<'a>(
+        p: &'a mut [F],
+        m: usize,
+        d_2pow: &MultipointEvalVZGathenLazyList<F>,
+    ) -> Vec<PolynomialSlice<'a, F>> {
+        if p.is_empty() {
+            return vec![PolynomialSlice(&[])];
+        }
+        let divisor = d_2pow.get(m);
+        let (r, q) = Self::sparse_div_with_rem(p, &divisor);
+        if m > 0 {
+            let mut r = Self::taylor_expansion_aux(r, m - 1, d_2pow);
+            assert!(r.len() <= 1 << m);
+            r.resize_with(1 << m, || PolynomialSlice(&[]));
+            r.extend(Self::taylor_expansion_aux(q, m - 1, d_2pow));
+            r
+        } else {
+            vec![PolynomialSlice::new(r), PolynomialSlice::new(q)]
+        }
+    }
+
+    fn taylor_expansion<'a>(
+        p: &'a mut Polynomial<F>,
+        d_2pow: &MultipointEvalVZGathenLazyList<F>,
+    ) -> Vec<PolynomialSlice<'a, F>> {
+        let d = d_2pow.get(0);
+        let n = p.degree();
+        let mut m = 0;
+        let mut deg_div = d.degree();
+        while deg_div < n {
+            m += 1;
+            deg_div <<= 1;
+        }
+        let Polynomial(p) = p;
+        Self::taylor_expansion_aux(p, m, d_2pow)
     }
 
     fn eval_at<'a>(
@@ -163,7 +393,7 @@ where
             let x = f.0.drain(..1).next().expect("at least one coefficient");
             node.idx.iter().map(|&idx| (idx, x.clone())).collect()
         } else {
-            let taylor = taylor_expansion_aux(f, self.ss[i - 1].degree(), &self.s_2pows[i - 1]);
+            let taylor = Self::taylor_expansion(&mut f, &self.s_2pows[i - 1]);
             let mut s_beta = F::zero();
             for (j, d) in suffix.iter().enumerate() {
                 s_beta += T::into_super(d.clone()) * self.s_betas[i - 1][suffix.len() - j].clone();
@@ -176,13 +406,19 @@ where
                     let c = child.value.clone();
                     let omega = s_beta.clone() + s_i_beta.clone() * T::into_super(c);
                     let mut omega_pow = F::one();
-                    let mut g = Polynomial::zero();
-                    for p in &taylor {
-                        g = g + p.clone() * omega_pow.clone();
-                        omega_pow *= omega.clone();
-                    }
+                    let f = {
+                        let mut g =
+                            vec![F::zero(); taylor.iter().map(|x| x.0.len()).max().unwrap_or(0)];
+                        for PolynomialSlice(p) in &taylor {
+                            for (p, g) in p.iter().zip(&mut g) {
+                                *g = g.clone() + p.clone() * omega_pow.clone();
+                            }
+                            omega_pow *= omega.clone();
+                        }
+                        Polynomial::new(g)
+                    };
                     self.eval_at(
-                        g,
+                        f,
                         suffix
                             .iter()
                             .cloned()
@@ -195,9 +431,10 @@ where
         }
     }
 
-    fn eval_from_node(&self, f: Polynomial<F>, n: usize, node: &TreeNode<T::Bottom>) -> Vec<F> {
+    fn eval_from_node(&self, mut f: Polynomial<F>, n: usize, node: &TreeNode<T::Bottom>) -> Vec<F> {
         let mut result = vec![F::zero(); n];
-        let (_, f) = f.div_with_rem(self.ss[self.ss.len() - 1].clone());
+        let (f, _) = Self::sparse_div_with_rem(&mut f.0, &self.ss[self.ss.len() - 1]);
+        let f = Polynomial::from(f.to_vec());
         for (i, r) in self.eval_at(f, vec![], node) {
             result[i] = r;
         }
